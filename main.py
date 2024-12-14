@@ -93,10 +93,74 @@ def main():
         action="store_true",
         help="Discord 봇과 함께 스케줄러 실행",
     )
+
+    # CLI Manual Actions
+    parser.add_argument(
+        "--action",
+        choices=["price", "buy", "sell"],
+        help="수동 작업 실행 (시세 조회, 매수, 매도)",
+    )
+    parser.add_argument(
+        "--code",
+        type=str,
+        help="종목코드 (6자리)",
+    )
+    parser.add_argument(
+        "--qty",
+        type=int,
+        default=1,
+        help="주문 수량 (기본값: 1)",
+    )
     
     args = parser.parse_args()
-    
-    if args.discord_bot:
+
+    if args.action:
+        # 수동 작업 모드
+        from src.trading.kis_client import get_kis_client
+
+        if not args.code:
+            logger.error("종목코드를 입력해주세요 (--code)")
+            return
+
+        client = get_kis_client()
+
+        try:
+            if args.action == "price":
+                # 시세 조회
+                resp = client.get_price(args.code)
+                output = resp.get("output", {})
+                # inquire-price usually returns:
+                # stck_prpr (Current Price)
+                # prdy_vrss (Change)
+                # prdy_ctrt (Change Rate)
+
+                price = int(output.get("stck_prpr", 0))
+                change = int(output.get("prdy_vrss", 0))
+                rate = float(output.get("prdy_ctrt", 0.0))
+
+                print(f"\n📊 {args.code} 현재가 조회")
+                print(f"💰 현재가: {price:,}원")
+                print(f"📈 등락: {change:,}원 ({rate}%)")
+                print("-" * 30)
+
+            elif args.action == "buy":
+                # 매수
+                print(f"\n💰 매수 주문 실행: {args.code} {args.qty}주")
+                resp = client.buy_stock(args.code, args.qty)
+                print("✅ 주문 전송 완료")
+                print(f"주문번호: {resp.get('output', {}).get('ODNO', 'Unknown')}")
+
+            elif args.action == "sell":
+                # 매도
+                print(f"\n💸 매도 주문 실행: {args.code} {args.qty}주")
+                resp = client.sell_stock(args.code, args.qty)
+                print("✅ 주문 전송 완료")
+                print(f"주문번호: {resp.get('output', {}).get('ODNO', 'Unknown')}")
+
+        except Exception as e:
+            logger.error(f"작업 실패: {e}")
+
+    elif args.discord_bot:
         # Discord 봇 전용 모드
         logger.info("Discord 봇 모드로 실행")
         from src.utils.discord_bot import run_discord_bot
