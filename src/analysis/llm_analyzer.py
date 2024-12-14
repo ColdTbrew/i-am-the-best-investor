@@ -273,3 +273,98 @@ def analyze_stock(stock_code: str, stock_name: str, current_price: int,
     except Exception as e:
         logger.error(f"종목 분석 실패: {e}")
         return f"종목 분석 중 오류가 발생했습니다: {e}"
+
+
+@dataclass
+class StockRecommendation:
+    """추천 종목 정보"""
+    stock_code: str
+    stock_name: str
+    current_price: int
+    change: int
+    change_rate: float
+    reason: str
+    confidence: int
+
+
+def get_daily_recommendations(market_data: dict, news_data: list) -> list[StockRecommendation]:
+    """
+    LLM 기반 금일 추천 종목 3개 조회
+    
+    Args:
+        market_data: 시장 데이터
+        news_data: 뉴스 데이터
+    
+    Returns:
+        추천 종목 리스트 (최대 3개)
+    """
+    from src.trading import get_kis_client
+    
+    prompt = f"""당신은 전문 주식 투자 분석가입니다.
+
+## 현재 시장 데이터
+{json.dumps(market_data, ensure_ascii=False, indent=2)}
+
+## 최신 뉴스
+{json.dumps(news_data[:10], ensure_ascii=False, indent=2)}
+
+## 분석 요청
+오늘 매수하기 좋은 종목 3개를 추천해주세요.
+단기(1-2주) 상승 가능성이 높은 종목을 선정하세요.
+
+각 종목에 대해 다음 정보를 JSON 배열로 응답해주세요:
+- stock_code: 종목코드 (6자리)
+- stock_name: 종목명
+- reason: 추천 이유 (핵심 포인트 2-3문장)
+- confidence: 확신도 (1-10)
+
+JSON 배열만 응답하세요. 다른 텍스트 없이 JSON만."""
+
+    try:
+        response = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+        )
+        
+        result = json.loads(response.choices[0].message.content)
+        
+        # 결과가 배열이 아닌 경우 처리
+        if isinstance(result, dict):
+            result = result.get("recommendations", result.get("stocks", []))
+        
+        # KIS API로 현재가 조회
+        kis_client = get_kis_client()
+        recommendations = []
+        
+        for item in result[:3]:  # 최대 3개
+            stock_code = item.get("stock_code", "")
+            stock_name = item.get("stock_name", "")
+            
+            try:
+                price_data = kis_client.get_price(stock_code)
+                output = price_data.get("output", {})
+                
+                current_price = int(output.get("stck_prpr", 0))
+                change = int(output.get("prdy_vrss", 0))
+                change_rate = float(output.get("prdy_ctrt", 0))
+                
+                recommendations.append(StockRecommendation(
+                    stock_code=stock_code,
+                    stock_name=stock_name,
+                    current_price=current_price,
+                    change=change,
+                    change_rate=change_rate,
+                    reason=item.get("reason", ""),
+                    confidence=item.get("confidence", 5),
+                ))
+            except Exception as e:
+                logger.warning(f"{stock_name} 시세 조회 실패: {e}")
+        
+        logger.info(f"추천 종목 조회 완료: {len(recommendations)}개")
+        return recommendations
+        
+    except Exception as e:
+        logger.error(f"추천 종목 분석 실패: {e}")
+        return []
+

@@ -226,7 +226,8 @@ class KISClient:
             "ORD_UNPR": str(price),
         }
         
-        logger.info(f"매수 주문: {stock_code} {quantity}주 @ {price}원")
+        price_str = "시장가" if price == 0 else f"{price:,}원"
+        logger.info(f"매수 주문: {stock_code} {quantity}주 @ {price_str}")
         return self._request("POST", path, tr_id, body=body)
     
     def sell_stock(self, stock_code: str, quantity: int, price: int = 0) -> dict:
@@ -251,7 +252,8 @@ class KISClient:
             "ORD_UNPR": str(price),
         }
         
-        logger.info(f"매도 주문: {stock_code} {quantity}주 @ {price}원")
+        price_str = "시장가" if price == 0 else f"{price:,}원"
+        logger.info(f"매도 주문: {stock_code} {quantity}주 @ {price_str}")
         return self._request("POST", path, tr_id, body=body)
 
 

@@ -450,10 +450,47 @@ class TradingBot(commands.Bot):
                 try:
                     client = get_kis_client()
                     balance = client.get_balance()
+                    
+                    output1 = balance.get("output1", [])
                     output2 = balance.get("output2", [{}])[0]
+                    
                     total = int(output2.get("tot_evlu_amt", 0))
                     cash = int(output2.get("dnca_tot_amt", 0))
-                    msg = f"📊 **포트폴리오**\n💰 총 평가금액: {total:,}원\n💵 예수금: {cash:,}원"
+                    
+                    msg = f"📊 **포트폴리오**\n"
+                    msg += f"💵 예수금: {cash:,}원\n\n"
+                    
+                    if output1:
+                        # 총 매수액, 총 평가액 계산
+                        total_buy = 0
+                        total_eval = 0
+                        for item in output1:
+                            qty = int(item.get("hldg_qty", 0))
+                            buy_price = float(item.get("pchs_avg_pric", 0))
+                            current = int(item.get("prpr", 0))
+                            total_buy += int(qty * buy_price)
+                            total_eval += qty * current
+                        
+                        total_profit = total_eval - total_buy
+                        profit_rate = (total_profit / total_buy * 100) if total_buy > 0 else 0
+                        profit_emoji = "📈" if total_profit >= 0 else "📉"
+                        profit_color = "🔴" if total_profit > 0 else "🔵" if total_profit < 0 else "⚪"
+                        
+                        msg += f"💰 총 매수액: {total_buy:,}원\n"
+                        msg += f"💎 총 평가액: {total_eval:,}원\n"
+                        msg += f"{profit_emoji} 총 손익: {profit_color} {total_profit:+,}원 ({profit_rate:+.2f}%)\n\n"
+                        
+                        msg += "📈 **보유 종목:**\n"
+                        for item in output1[:10]:
+                            name = item.get("prdt_name", "")
+                            qty = int(item.get("hldg_qty", 0))
+                            profit = float(item.get("evlu_pfls_rt", 0))
+                            current = int(item.get("prpr", 0))
+                            emoji = "🔴" if profit > 0 else "🔵" if profit < 0 else "⚪"
+                            msg += f"• {name}: {qty}주 @ {current:,}원 {emoji} ({profit:+.2f}%)\n"
+                    else:
+                        msg += "📭 보유 종목 없음"
+                    
                     await interaction.followup.send(msg)
                 except Exception as e:
                     await interaction.followup.send(f"❌ 조회 실패: {e}")
@@ -588,7 +625,7 @@ class TradingBot(commands.Bot):
                 def do_analysis():
                     stock_info = search_stock(query)
                     if not stock_info:
-                        return None, None, f"'{query}'에 해당하는 종목을 찾을 수 없습니다."
+                        return None, None, None, f"'{query}'에 해당하는 종목을 찾을 수 없습니다."
                     
                     code = stock_info["code"]
                     market = stock_info["market"]
@@ -597,31 +634,45 @@ class TradingBot(commands.Bot):
                     
                     if market == "KR":
                         price_data = client.get_price(code)
-                        current_price = int(price_data["output"]["stck_prpr"])
-                        stock_name = price_data["output"].get("prdt_abrv_name", name)
+                        output = price_data["output"]
+                        current_price = int(output["stck_prpr"])
+                        change = int(output.get("prdy_vrss", 0))
+                        change_rate = float(output.get("prdy_ctrt", 0))
+                        stock_name = output.get("prdt_abrv_name", name)
                         label = "🇰🇷"
+                        
+                        # 가격 정보 문자열
+                        emoji = "📈" if change > 0 else "📉" if change < 0 else "➖"
+                        color = "🔴" if change > 0 else "🔵" if change < 0 else "⚪"
+                        price_info = f"💰 현재가: **{current_price:,}원**\n"
+                        price_info += f"{emoji} 전일대비: {color} {change:+,}원 ({change_rate:+.2f}%)\n"
                     else:
                         exchange = stock_info.get("exchange", "NAS")
                         price_data = client.get_overseas_price(exchange, code)
-                        current_price = float(price_data["output"]["last"])
+                        output = price_data["output"]
+                        current_price = float(output["last"])
                         stock_name = name
                         label = "🇺🇸"
+                        price_info = f"💰 현재가: **${current_price:,.2f}**\n"
                     
                     result = analyze_stock(code, stock_name, current_price)
-                    return f"{label} {stock_name}", code, result
+                    return f"{label} {stock_name}", code, price_info, result
                 
                 try:
                     loop = asyncio.get_event_loop()
                     with ThreadPoolExecutor() as pool:
-                        stock_name, code, result = await loop.run_in_executor(pool, do_analysis)
+                        stock_name, code, price_info, result = await loop.run_in_executor(pool, do_analysis)
                     
                     if stock_name is None:
                         await interaction.followup.send(f"❌ {result}")
                         return
                     
-                    if len(result) > 1800:
-                        result = result[:1800] + "..."
-                    await interaction.followup.send(f"📊 **{stock_name} ({code})**\n{result}")
+                    # 가격 정보 + 분석 결과 조합
+                    full_msg = f"📊 **{stock_name} ({code})**\n{price_info}\n{result}"
+                    
+                    if len(full_msg) > 1900:
+                        full_msg = full_msg[:1900] + "..."
+                    await interaction.followup.send(full_msg)
                 except Exception as e:
                     await interaction.followup.send(f"❌ 분석 실패: {e}")
             
@@ -647,11 +698,114 @@ class TradingBot(commands.Bot):
             async def slash_resume(interaction: discord.Interaction):
                 await interaction.response.send_message("▶️ **거래 재개** - 거래를 재개합니다.")
             
+            @self.tree.command(name="recommend", description="오늘의 추천 종목 3개")
+            async def slash_recommend(interaction: discord.Interaction):
+                await interaction.response.defer()
+                
+                import asyncio
+                from concurrent.futures import ThreadPoolExecutor
+                from src.data import fetch_news, get_market_data, generate_stock_chart
+                from src.analysis import get_daily_recommendations
+                
+                def get_recommendations():
+                    """동기 함수 - 추천 종목 조회"""
+                    market_data = get_market_data()
+                    news_data = fetch_news(max_items=10)
+                    recommendations = get_daily_recommendations(market_data, news_data)
+                    
+                    # 각 종목별 차트 생성
+                    charts = []
+                    for rec in recommendations:
+                        chart_path = generate_stock_chart(rec.stock_code, rec.stock_name, days=7)
+                        charts.append(chart_path)
+                    
+                    return recommendations, charts
+                
+                try:
+                    loop = asyncio.get_event_loop()
+                    with ThreadPoolExecutor() as pool:
+                        recommendations, charts = await loop.run_in_executor(pool, get_recommendations)
+                    
+                    if not recommendations:
+                        await interaction.followup.send("❌ 추천 종목을 찾을 수 없습니다.")
+                        return
+                    
+                    # 각 종목별 메시지 + 버튼 전송
+                    for i, rec in enumerate(recommendations):
+                        # 가격 정보
+                        emoji = "📈" if rec.change > 0 else "📉" if rec.change < 0 else "➖"
+                        color = "🔴" if rec.change > 0 else "🔵" if rec.change < 0 else "⚪"
+                        
+                        msg = f"**#{i+1} {rec.stock_name} ({rec.stock_code})**\n"
+                        msg += f"💰 현재가: **{rec.current_price:,}원**\n"
+                        msg += f"{emoji} 전일대비: {color} {rec.change:+,}원 ({rec.change_rate:+.2f}%)\n"
+                        msg += f"⭐ 확신도: {'⭐' * rec.confidence}{'☆' * (10 - rec.confidence)}\n\n"
+                        msg += f"📝 **추천 이유:**\n{rec.reason}"
+                        
+                        # 매수 버튼 View 생성
+                        view = BuyButtonView(rec.stock_code, rec.stock_name, rec.current_price)
+                        
+                        # 차트 이미지가 있으면 첨부
+                        chart_path = charts[i] if i < len(charts) else None
+                        if chart_path:
+                            file = discord.File(chart_path, filename=f"{rec.stock_code}_chart.png")
+                            await interaction.followup.send(msg, file=file, view=view)
+                        else:
+                            await interaction.followup.send(msg, view=view)
+                    
+                except Exception as e:
+                    logger.error(f"추천 종목 조회 실패: {e}")
+                    await interaction.followup.send(f"❌ 추천 종목 조회 실패: {e}")
+            
             # 글로벌 명령어 동기화
             synced = await self.tree.sync()
             logger.info(f"슬래시 명령어 {len(synced)}개 동기화 완료")
         except Exception as e:
             logger.error(f"슬래시 명령어 동기화 실패: {e}")
+
+
+class BuyButtonView(discord.ui.View):
+    """매수 버튼 View"""
+    
+    def __init__(self, stock_code: str, stock_name: str, price: int):
+        super().__init__(timeout=300)  # 5분 후 버튼 비활성화
+        self.stock_code = stock_code
+        self.stock_name = stock_name
+        self.price = price
+    
+    @discord.ui.button(label="매수 1주", style=discord.ButtonStyle.primary, emoji="💰")
+    async def buy_1(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._execute_buy(interaction, 1)
+    
+    @discord.ui.button(label="매수 5주", style=discord.ButtonStyle.primary, emoji="💎")
+    async def buy_5(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._execute_buy(interaction, 5)
+    
+    @discord.ui.button(label="매수 10주", style=discord.ButtonStyle.success, emoji="🚀")
+    async def buy_10(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._execute_buy(interaction, 10)
+    
+    async def _execute_buy(self, interaction: discord.Interaction, quantity: int):
+        """매수 실행"""
+        await interaction.response.defer()
+        
+        from src.trading import get_kis_client
+        
+        try:
+            client = get_kis_client()
+            res = client.buy_stock(self.stock_code, quantity)
+            
+            order_no = res.get("output", {}).get("ODNO", "알수없음")
+            
+            msg = f"✅ **매수 주문 완료!**\n"
+            msg += f"종목: {self.stock_name} ({self.stock_code})\n"
+            msg += f"수량: {quantity}주\n"
+            msg += f"주문번호: {order_no}"
+            
+            await interaction.followup.send(msg)
+            
+        except Exception as e:
+            await interaction.followup.send(f"❌ 매수 실패: {e}")
 
 
 def run_discord_bot():
@@ -666,3 +820,4 @@ def run_discord_bot():
         bot.run(DISCORD_BOT_TOKEN)
     except Exception as e:
         logger.error(f"Discord 봇 실행 실패: {e}")
+

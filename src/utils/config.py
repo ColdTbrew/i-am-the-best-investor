@@ -50,7 +50,7 @@ RISK_CONFIG = {
 SCHEDULE_CONFIG = {
     "market_open": "09:00",
     "market_close": "15:30",
-    "bot_start": "08:30",
+    "bot_start": "11:59",
     "analysis_time": "08:45",
     "order_time": "09:00",
 }
