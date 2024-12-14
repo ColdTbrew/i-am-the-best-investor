@@ -338,8 +338,13 @@ JSON 배열만 응답하세요. 다른 텍스트 없이 JSON만."""
         recommendations = []
         
         for item in result[:3]:  # 최대 3개
-            stock_code = item.get("stock_code", "")
+            stock_code = str(item.get("stock_code", "")).strip()
             stock_name = item.get("stock_name", "")
+            
+            # 종목코드 유효성 검증 (6자리 숫자만)
+            if not stock_code.isdigit() or len(stock_code) != 6:
+                logger.warning(f"잘못된 종목코드 스킵: {stock_code} ({stock_name})")
+                continue
             
             try:
                 price_data = kis_client.get_price(stock_code)
