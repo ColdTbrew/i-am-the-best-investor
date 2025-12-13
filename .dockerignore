@@ -1,0 +1,30 @@
+# 환경 및 캐시
+.env
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Git
+.git/
+.gitignore
+
+# 로그 및 데이터
+logs/
+data/
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# 테스트
+tests/
+*.test.py
+
+# 문서
+*.md
+!README.md
+
+# 클론된 레포
+open-trading-api/

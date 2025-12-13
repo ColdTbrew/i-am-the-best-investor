@@ -1,0 +1,31 @@
+[project]
+name = "i-am-the-best-investor"
+version = "0.1.0"
+description = "LLM 기반 일일 자동매매 봇"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "openai>=1.0.0",
+    "httpx>=0.25.0",
+    "pandas>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "apscheduler>=3.10.0",
+    "discord.py>=2.3.0",
+    "loguru>=0.7.0",
+    "feedparser>=6.0.0",
+    "beautifulsoup4>=4.12.0",
+    "pykrx>=1.0.0",
+    "setuptools>=80.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "ruff>=0.1.0",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=7.0.0",
+    "ruff>=0.1.0",
+]
