@@ -373,3 +373,32 @@ JSON 배열만 응답하세요. 다른 텍스트 없이 JSON만."""
         logger.error(f"추천 종목 분석 실패: {e}")
         return []
 
+
+def chat_with_llm(query: str) -> str:
+    """
+    일반적인 LLM 대화 (Discord 채팅용)
+
+    Args:
+        query: 사용자 질문
+
+    Returns:
+        LLM 응답
+    """
+    prompt = """당신은 주식 투자 및 경제 분야에 정통한 친절한 AI 어시스턴트입니다.
+사용자의 질문에 대해 명확하고 도움이 되는 답변을 제공해주세요.
+투자에 관련된 질문에는 신중하게 답변하고, 투자는 본인의 책임임을 상기시켜주는 것이 좋습니다."""
+
+    try:
+        response = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": query}
+            ],
+        )
+
+        return response.choices[0].message.content
+
+    except Exception as e:
+        logger.error(f"LLM 채팅 실패: {e}")
+        return f"죄송합니다. 답변을 생성하는 중에 문제가 발생했습니다: {e}"

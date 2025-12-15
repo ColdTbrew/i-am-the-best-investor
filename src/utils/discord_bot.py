@@ -698,6 +698,50 @@ class TradingBot(commands.Bot):
             async def slash_resume(interaction: discord.Interaction):
                 await interaction.response.send_message("▶️ **거래 재개** - 거래를 재개합니다.")
             
+            @self.tree.command(name="chat", description="AI 투자 비서와 대화하기")
+            @discord.app_commands.describe(query="질문할 내용")
+            async def slash_chat(interaction: discord.Interaction, query: str):
+                await interaction.response.defer()
+
+                import asyncio
+                from concurrent.futures import ThreadPoolExecutor
+                from src.analysis.llm_analyzer import chat_with_llm
+
+                try:
+                    # 스레드풀에서 실행 (Discord 하트비트 차단 방지)
+                    loop = asyncio.get_event_loop()
+                    with ThreadPoolExecutor() as pool:
+                        response = await loop.run_in_executor(pool, chat_with_llm, query)
+
+                    # 메시지가 너무 길면 나눠서 보내기 (Discord 제한 2000자)
+                    # 첫 번째 메시지는 질문을 포함하므로 길이를 계산해야 함
+                    header_format = "🗨️ **질문**: {}\n\n🤖 **답변**:\n"
+                    # 질문이 너무 길면 자름 (최대 200자)
+                    display_query = query[:200] + "..." if len(query) > 200 else query
+                    header = header_format.format(display_query)
+
+                    # 첫 번째 청크가 들어갈 수 있는 공간 계산
+                    # 2000 (Discord 제한) - header 길이 - 여유분(10)
+                    first_chunk_size = 2000 - len(header) - 10
+                    if first_chunk_size < 100: # 공간이 너무 부족하면 질문 표시 생략하거나 별도 메시지로 처리해야 하지만 여기선 질문을 더 줄임
+                        display_query = display_query[:50] + "..."
+                        header = header_format.format(display_query)
+                        first_chunk_size = 2000 - len(header) - 10
+
+                    # 첫 번째 청크
+                    first_chunk = response[:first_chunk_size]
+                    remaining_response = response[first_chunk_size:]
+
+                    await interaction.followup.send(header + first_chunk)
+
+                    # 나머지 부분 전송 (1900자씩 끊어서)
+                    if remaining_response:
+                        for i in range(0, len(remaining_response), 1900):
+                            await interaction.followup.send(remaining_response[i:i+1900])
+
+                except Exception as e:
+                    await interaction.followup.send(f"❌ 대화 실패: {e}")
+
             @self.tree.command(name="recommend", description="오늘의 추천 종목 3개")
             async def slash_recommend(interaction: discord.Interaction):
                 await interaction.response.defer()
