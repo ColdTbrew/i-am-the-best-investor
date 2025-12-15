@@ -266,7 +266,7 @@ JSON 배열로 응답:
         # KR은 현재 설정된 계좌 상관없이 조회 가능하나, US는 해외시세 신청 계좌 필요할 수 있음.
         # 여기서는 state.get_mode()를 사용하되, US 추천의 경우 client 메서드 호출 주의.
 
-        client = get_kis_client() # 현재 모드 클라이언트
+        kis_client = get_kis_client() # 현재 모드 클라이언트
         recommendations = []
         
         for item in result[:3]:
@@ -280,7 +280,7 @@ JSON 배열로 응답:
                 
                 if market == "KR":
                     if len(code) == 6 and code.isdigit():
-                        res = client.get_price(code)
+                        res = kis_client.get_price(code)
                         output = res.get("output", {})
                         current_price = float(output.get("stck_prpr", 0))
                         change = float(output.get("prdy_vrss", 0))
@@ -288,7 +288,7 @@ JSON 배열로 응답:
                 else:
                     # US
                     # 거래소 코드 추정 (임시: NAS)
-                    res = client.get_overseas_price("NAS", code)
+                    res = kis_client.get_overseas_price("NAS", code)
                     output = res.get("output", {})
                     current_price = float(output.get("last", 0))
                     # 해외주식 등락 정보는 API 응답 필드 확인 필요

@@ -203,16 +203,16 @@ class KISClient:
 
     def get_overseas_balance(self) -> dict:
         """해외주식 잔고 조회"""
-        tr_id = "TTTS3012R"  # 해외주식 미체결내역/잔고
+        tr_id = "TTTS3012R"  # 해외주식 체결기준잔고
         path = "/uapi/overseas-stock/v1/trading/inquire-balance"
 
         params = {
             "CANO": self.account_number,
             "ACNT_PRDT_CD": self.account_product,
-            "OVRS_EXCG_CD": "NAS", # 대표로 NAS
+            "OVRS_EXCG_CD": "NASD",  # NAS -> NASD (나스닥)
             "TR_CRCY_CD": "USD",
-            "CTX_AREA_FK100": "",
-            "CTX_AREA_NK100": "",
+            "CTX_AREA_FK200": "",
+            "CTX_AREA_NK200": "",
         }
         # 모의투자 TR ID 변경: VTTS3012R
         if self.mode == "paper":
