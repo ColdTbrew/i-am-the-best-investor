@@ -30,6 +30,7 @@ async def run_morning_routine(scheduler=None):
         orders_to_schedule = []
 
         # 예산 계산 (총 예수금의 50%를 3분할)
+        balance = None
         try:
             balance = client.get_balance()
             output2 = balance.get("output2", [{}])[0]
@@ -38,7 +39,8 @@ async def run_morning_routine(scheduler=None):
             # 최소 10만원은 되어야 함
             if budget_per_stock < 100000:
                 budget_per_stock = 100000
-        except:
+        except Exception as e:
+            logger.warning(f"잔고 조회 실패, 기본 예산 사용: {e}")
             budget_per_stock = 100000
 
         for rec in recommendations[:3]:
@@ -81,23 +83,24 @@ async def run_morning_routine(scheduler=None):
             )
             send_webhook_message(f"⏰ **KR 매수 주문 예약됨**: 09:00 실행 예정 ({len(orders_to_schedule)}종목)")
 
-        # 2. 매도 추천 (보유 중)
-        holdings = balance.get("output1", [])
-        sell_candidates = []
-        for item in holdings:
-            profit_rate = float(item.get("evlu_pfls_rt", 0))
-            if profit_rate > 5.0 or profit_rate < -3.0:
-                sell_candidates.append(item)
+        # 2. 매도 추천 (보유 중) - balance가 있을 때만
+        if balance:
+            holdings = balance.get("output1", [])
+            sell_candidates = []
+            for item in holdings:
+                profit_rate = float(item.get("evlu_pfls_rt", 0))
+                if profit_rate > 5.0 or profit_rate < -3.0:
+                    sell_candidates.append(item)
 
-        if sell_candidates:
-            sell_embeds = []
-            for item in sell_candidates:
-                sell_embeds.append({
-                    "title": f"📉 매도 추천 (KR): {item['prdt_name']}",
-                    "description": f"수익률: {float(item['evlu_pfls_rt']):.2f}%",
-                    "color": 0xFF0000
-                })
-            send_webhook_message("📉 **오늘의 매도 추천 (보유 중)**", embeds=sell_embeds)
+            if sell_candidates:
+                sell_embeds = []
+                for item in sell_candidates:
+                    sell_embeds.append({
+                        "title": f"📉 매도 추천 (KR): {item['prdt_name']}",
+                        "description": f"수익률: {float(item['evlu_pfls_rt']):.2f}%",
+                        "color": 0xFF0000
+                    })
+                send_webhook_message("📉 **오늘의 매도 추천 (보유 중)**", embeds=sell_embeds)
 
     except Exception as e:
         logger.error(f"아침 루틴 실패: {e}")
