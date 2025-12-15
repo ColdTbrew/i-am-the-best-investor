@@ -224,6 +224,123 @@ class TradingBot(commands.Bot):
             except Exception as e:
                 await ctx.send(f"❌ 포트폴리오 조회 실패: {e}")
         
+        @self.command(name="price")
+        async def price(ctx, *, query: str = None):
+            """현재가 조회"""
+            if not query:
+                await ctx.send("❓ 사용법: `/price 삼성전자` 또는 `/price 005930`")
+                return
+
+            from src.trading import get_kis_client
+            from src.data.stock_search import search_stock
+
+            try:
+                stock_info = search_stock(query)
+                if not stock_info:
+                    await ctx.send(f"❌ '{query}' 종목을 찾을 수 없습니다.")
+                    return
+
+                code = stock_info["code"]
+                market = stock_info["market"]
+                name = stock_info.get("name", code)
+
+                client = get_kis_client()
+
+                if market == "KR":
+                    res = client.get_price(code)
+                    price = int(res["output"]["stck_prpr"])
+                    change = int(res["output"]["prdy_vrss"])
+                    rate = float(res["output"]["prdy_ctrt"])
+
+                    emoji = "📈" if change > 0 else "📉" if change < 0 else "➖"
+                    color = "🔴" if change > 0 else "🔵" if change < 0 else "⚪"
+
+                    msg = f"{emoji} **{name} ({code})**\n"
+                    msg += f"현재가: **{price:,}원**\n"
+                    msg += f"전일대비: {color} {change:+,}원 ({rate:+.2f}%)"
+                    await ctx.send(msg)
+                else:
+                    exchange = stock_info.get("exchange", "NAS")
+                    res = client.get_overseas_price(exchange, code)
+                    price = float(res["output"]["last"])
+
+                    msg = f"🇺🇸 **{name} ({code})**\n"
+                    msg += f"현재가: **${price:,.2f}**"
+                    await ctx.send(msg)
+
+            except Exception as e:
+                await ctx.send(f"❌ 시세 조회 실패: {e}")
+
+        @self.command(name="buy")
+        async def buy(ctx, query: str, quantity: int):
+            """주식 매수 (시장가)"""
+            if quantity <= 0:
+                await ctx.send("❌ 수량은 1주 이상이어야 합니다.")
+                return
+
+            from src.trading import get_kis_client
+            from src.data.stock_search import search_stock
+
+            try:
+                stock_info = search_stock(query)
+                if not stock_info:
+                    await ctx.send(f"❌ '{query}' 종목을 찾을 수 없습니다.")
+                    return
+
+                if stock_info["market"] != "KR":
+                    await ctx.send("❌ 현재는 한국 주식만 자동 매매가 가능합니다.")
+                    return
+
+                code = stock_info["code"]
+                name = stock_info.get("name", code)
+
+                client = get_kis_client()
+                res = client.buy_stock(code, quantity)
+
+                msg = f"📈 **매수 주문 전송**\n"
+                msg += f"종목: {name} ({code})\n"
+                msg += f"수량: {quantity}주\n"
+                msg += f"주문번호: {res.get('output', {}).get('ODNO', '알수없음')}"
+
+                await ctx.send(msg)
+            except Exception as e:
+                await ctx.send(f"❌ 매수 주문 실패: {e}")
+
+        @self.command(name="sell")
+        async def sell(ctx, query: str, quantity: int):
+            """주식 매도 (시장가)"""
+            if quantity <= 0:
+                await ctx.send("❌ 수량은 1주 이상이어야 합니다.")
+                return
+
+            from src.trading import get_kis_client
+            from src.data.stock_search import search_stock
+
+            try:
+                stock_info = search_stock(query)
+                if not stock_info:
+                    await ctx.send(f"❌ '{query}' 종목을 찾을 수 없습니다.")
+                    return
+
+                if stock_info["market"] != "KR":
+                    await ctx.send("❌ 현재는 한국 주식만 자동 매매가 가능합니다.")
+                    return
+
+                code = stock_info["code"]
+                name = stock_info.get("name", code)
+
+                client = get_kis_client()
+                res = client.sell_stock(code, quantity)
+
+                msg = f"📉 **매도 주문 전송**\n"
+                msg += f"종목: {name} ({code})\n"
+                msg += f"수량: {quantity}주\n"
+                msg += f"주문번호: {res.get('output', {}).get('ODNO', '알수없음')}"
+
+                await ctx.send(msg)
+            except Exception as e:
+                await ctx.send(f"❌ 매도 주문 실패: {e}")
+
         @self.command(name="analyze")
         async def analyze(ctx, *, query: str = None):
             """종목 분석 요청 (한국/미국 주식 지원)"""
@@ -341,6 +458,122 @@ class TradingBot(commands.Bot):
                 except Exception as e:
                     await interaction.followup.send(f"❌ 조회 실패: {e}")
             
+            @self.tree.command(name="price", description="현재가 조회")
+            @discord.app_commands.describe(query="종목명 또는 코드")
+            async def slash_price(interaction: discord.Interaction, query: str):
+                await interaction.response.defer()
+                from src.trading import get_kis_client
+                from src.data.stock_search import search_stock
+
+                try:
+                    stock_info = search_stock(query)
+                    if not stock_info:
+                        await interaction.followup.send(f"❌ '{query}' 종목을 찾을 수 없습니다.")
+                        return
+
+                    code = stock_info["code"]
+                    market = stock_info["market"]
+                    name = stock_info.get("name", code)
+
+                    client = get_kis_client()
+
+                    if market == "KR":
+                        res = client.get_price(code)
+                        price = int(res["output"]["stck_prpr"])
+                        change = int(res["output"]["prdy_vrss"])
+                        rate = float(res["output"]["prdy_ctrt"])
+
+                        emoji = "📈" if change > 0 else "📉" if change < 0 else "➖"
+                        color = "🔴" if change > 0 else "🔵" if change < 0 else "⚪"
+
+                        msg = f"{emoji} **{name} ({code})**\n"
+                        msg += f"현재가: **{price:,}원**\n"
+                        msg += f"전일대비: {color} {change:+,}원 ({rate:+.2f}%)"
+                        await interaction.followup.send(msg)
+                    else:
+                        exchange = stock_info.get("exchange", "NAS")
+                        res = client.get_overseas_price(exchange, code)
+                        price = float(res["output"]["last"])
+
+                        msg = f"🇺🇸 **{name} ({code})**\n"
+                        msg += f"현재가: **${price:,.2f}**"
+                        await interaction.followup.send(msg)
+
+                except Exception as e:
+                    await interaction.followup.send(f"❌ 시세 조회 실패: {e}")
+
+            @self.tree.command(name="buy", description="주식 매수 (시장가)")
+            @discord.app_commands.describe(query="종목명 또는 코드", quantity="매수 수량")
+            async def slash_buy(interaction: discord.Interaction, query: str, quantity: int):
+                if quantity <= 0:
+                    await interaction.response.send_message("❌ 수량은 1주 이상이어야 합니다.")
+                    return
+                await interaction.response.defer()
+
+                from src.trading import get_kis_client
+                from src.data.stock_search import search_stock
+
+                try:
+                    stock_info = search_stock(query)
+                    if not stock_info:
+                        await interaction.followup.send(f"❌ '{query}' 종목을 찾을 수 없습니다.")
+                        return
+
+                    if stock_info["market"] != "KR":
+                        await interaction.followup.send("❌ 현재는 한국 주식만 자동 매매가 가능합니다.")
+                        return
+
+                    code = stock_info["code"]
+                    name = stock_info.get("name", code)
+
+                    client = get_kis_client()
+                    res = client.buy_stock(code, quantity)
+
+                    msg = f"📈 **매수 주문 전송**\n"
+                    msg += f"종목: {name} ({code})\n"
+                    msg += f"수량: {quantity}주\n"
+                    msg += f"주문번호: {res.get('output', {}).get('ODNO', '알수없음')}"
+
+                    await interaction.followup.send(msg)
+                except Exception as e:
+                    await interaction.followup.send(f"❌ 매수 주문 실패: {e}")
+
+            @self.tree.command(name="sell", description="주식 매도 (시장가)")
+            @discord.app_commands.describe(query="종목명 또는 코드", quantity="매도 수량")
+            async def slash_sell(interaction: discord.Interaction, query: str, quantity: int):
+                if quantity <= 0:
+                    await interaction.response.send_message("❌ 수량은 1주 이상이어야 합니다.")
+                    return
+                await interaction.response.defer()
+
+                from src.trading import get_kis_client
+                from src.data.stock_search import search_stock
+
+                try:
+                    stock_info = search_stock(query)
+                    if not stock_info:
+                        await interaction.followup.send(f"❌ '{query}' 종목을 찾을 수 없습니다.")
+                        return
+
+                    if stock_info["market"] != "KR":
+                        await interaction.followup.send("❌ 현재는 한국 주식만 자동 매매가 가능합니다.")
+                        return
+
+                    code = stock_info["code"]
+                    name = stock_info.get("name", code)
+
+                    client = get_kis_client()
+                    res = client.sell_stock(code, quantity)
+
+                    msg = f"📉 **매도 주문 전송**\n"
+                    msg += f"종목: {name} ({code})\n"
+                    msg += f"수량: {quantity}주\n"
+                    msg += f"주문번호: {res.get('output', {}).get('ODNO', '알수없음')}"
+
+                    await interaction.followup.send(msg)
+                except Exception as e:
+                    await interaction.followup.send(f"❌ 매도 주문 실패: {e}")
+
             @self.tree.command(name="analyze", description="종목 분석 (예: 삼성전자, TSLA)")
             @discord.app_commands.describe(query="종목명 또는 티커 (예: 삼성전자, 005930, TSLA)")
             async def slash_analyze(interaction: discord.Interaction, query: str):
