@@ -9,17 +9,26 @@ load_dotenv()
 # 프로젝트 루트 경로
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
-# 거래 모드
-TRADING_MODE = os.getenv("TRADING_MODE", "paper")  # "paper" or "real"
+# 기본 거래 모드 (초기값)
+DEFAULT_TRADING_MODE = os.getenv("TRADING_MODE", "paper")
 
-# 한국투자증권 API
-KIS_API_KEY = os.getenv("real_account_api_key") if TRADING_MODE == "real" else os.getenv("fake_account_api_key")
-KIS_API_SECRET = os.getenv("real_account_api_secret") if TRADING_MODE == "real" else os.getenv("fake_account_api_secret")
-KIS_BASE_URL = "https://openapi.koreainvestment.com:9443" if TRADING_MODE == "real" else "https://openapivts.koreainvestment.com:29443"
-
-# 계좌번호 (실전: 69247414, 모의: 50158070)
-KIS_ACCOUNT_NUMBER = os.getenv("real_account_number") if TRADING_MODE == "real" else os.getenv("fake_account_number")
-KIS_ACCOUNT_PRODUCT = os.getenv("real_account_product", "01") if TRADING_MODE == "real" else os.getenv("fake_account_product", "01")
+# 한국투자증권 API 설정 (Real / Paper)
+KIS_CONFIG = {
+    "real": {
+        "app_key": os.getenv("real_account_api_key"),
+        "app_secret": os.getenv("real_account_api_secret"),
+        "base_url": "https://openapi.koreainvestment.com:9443",
+        "account_number": os.getenv("real_account_number"),
+        "account_product": os.getenv("real_account_product", "01"),
+    },
+    "paper": {
+        "app_key": os.getenv("fake_account_api_key"),
+        "app_secret": os.getenv("fake_account_api_secret"),
+        "base_url": "https://openapivts.koreainvestment.com:29443",
+        "account_number": os.getenv("fake_account_number"),
+        "account_product": os.getenv("fake_account_product", "01"),
+    }
+}
 
 # OpenAI API
 OPENAI_API_KEY = os.getenv("openai_api_key")
@@ -44,6 +53,9 @@ RISK_CONFIG = {
     "stop_loss_rate": -0.05,            # 손절 라인 (-5%)
     "take_profit_rate": 0.15,           # 익절 라인 (+15%)
     "max_daily_loss": -0.03,            # 일일 최대 손실 (-3%)
+
+    # 급등주 단타 설정
+    "scalping_amount": 100000,          # 단타 진입 금액 (10만원)
 }
 
 # 스케줄 설정
@@ -53,4 +65,6 @@ SCHEDULE_CONFIG = {
     "bot_start": "11:59",
     "analysis_time": "08:45",
     "order_time": "09:00",
+    "kr_morning_routine": "08:00",
+    "us_evening_routine": "22:00",
 }

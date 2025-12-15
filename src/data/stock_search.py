@@ -2,12 +2,11 @@
 from typing import Optional, Tuple
 import httpx
 
-from src.utils.config import (
-    KIS_API_KEY, 
-    KIS_API_SECRET, 
-    KIS_BASE_URL,
-    TRADING_MODE,
-)
+# KIS_CONFIG is imported but not used in search logic,
+# but we keep it if future extensions need it.
+# The previous regression was removing API_KEY constants but not updating usage if any existed.
+# Here, search_stock doesn't use API keys, it uses static maps or pykrx.
+# So removing the unused imports is safe.
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
