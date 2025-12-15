@@ -111,7 +111,7 @@ async def run_evening_routine(scheduler=None):
 
     try:
         # 1. 미국 주식 추천
-        news_data = fetch_news(max_items=20, query="US Stock Market")
+        news_data = fetch_news(max_items=20)
         recommendations = get_daily_recommendations(None, news_data, market="US")
 
         embeds = []

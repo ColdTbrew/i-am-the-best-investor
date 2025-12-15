@@ -12,7 +12,7 @@ logger = get_logger(__name__)
 NEWS_SOURCES = {
     "google_stock": "https://news.google.com/rss/search?q=주식+코스피&hl=ko&gl=KR&ceid=KR:ko",
     "google_economy": "https://news.google.com/rss/search?q=경제+증시&hl=ko&gl=KR&ceid=KR:ko",
-    "hankyung": "https://www.hankyung.com/feed/stock",
+    "google_us_market": "https://news.google.com/rss/search?q=US+stock+market&hl=en&gl=US&ceid=US:en",
 }
 
 
