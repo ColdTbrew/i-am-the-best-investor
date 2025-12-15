@@ -56,11 +56,14 @@ uv run python main.py --with-discord
 | 명령어 | 설명 |
 |--------|------|
 | `/status` | 봇 상태 확인 |
+| `/mode` | 거래 모드 변경 (Real / Paper) |
 | `/portfolio` | 포트폴리오 조회 |
 | `/analyze 삼성전자` | 종목 분석 (한국/미국) |
+| `/morning` | 🌅 아침 루틴 즉시 실행 (한국장) |
+| `/evening` | 🌙 저녁 루틴 즉시 실행 (미국장) |
 | `/news` | 최신 뉴스 |
-| `/stop` | 거래 중지 |
-| `/resume` | 거래 재개 |
+| `/buy 삼성전자 10` | 매수 주문 |
+| `/sell 삼성전자 10` | 매도 주문 |
 
 ## ⚙️ 설정
 
@@ -77,11 +80,71 @@ RISK_CONFIG = {
 }
 ```
 
-## 🐳 Docker 배포
+## 🐳 Docker 배포 (Oracle VM / Ubuntu)
+
+### 1. VM 초기 설정
 
 ```bash
+# 시스템 업데이트
+sudo apt update && sudo apt upgrade -y
+
+# Docker 설치
+sudo apt install -y docker.io
+sudo systemctl enable --now docker
+sudo usermod -aG docker $USER
+newgrp docker
+
+# Git, Vim 설치
+sudo apt install -y git vim
+```
+
+### 2. 코드 클론
+
+```bash
+git clone https://github.com/<your-username>/i-am-the-best-investor.git
+cd i-am-the-best-investor
+```
+
+### 3. 환경변수 설정
+
+```bash
+cp .env.example .env
+vi .env  # API 키 입력
+```
+
+### 4. Docker 빌드 & 실행
+
+```bash
+# 이미지 빌드
 docker build -t trading-bot .
-docker run -d --env-file .env --restart=always trading-bot
+
+# 컨테이너 실행 (백그라운드, 자동 재시작)
+docker run -d \
+  --name trading-bot \
+  --restart unless-stopped \
+  --env-file .env \
+  -v $(pwd)/logs:/app/logs \
+  -v $(pwd)/data:/app/data \
+  trading-bot
+```
+
+### 5. 관리 명령어
+
+```bash
+# 로그 확인
+docker logs -f trading-bot
+
+# 상태 확인
+docker ps
+
+# 중지/시작/재시작
+docker stop trading-bot
+docker start trading-bot
+docker restart trading-bot
+
+# 컨테이너 삭제 후 재빌드
+docker rm -f trading-bot
+docker build -t trading-bot .
 ```
 
 ## ⚠️ 면책사항

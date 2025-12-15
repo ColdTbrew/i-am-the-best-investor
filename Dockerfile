@@ -19,5 +19,5 @@ COPY . .
 # 환경변수 설정
 ENV TRADING_MODE=paper
 
-# 실행
-CMD ["uv", "run", "python", "main.py"]
+# 실행 (스케줄러 + Discord 봇)
+CMD ["uv", "run", "python", "main.py", "--with-discord"]

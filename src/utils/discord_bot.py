@@ -149,6 +149,29 @@ class TradingBot(commands.Bot):
                 state.set_mode(mode.value)
                 await interaction.response.send_message(f"🔄 모드 변경 완료: **{mode.value.upper()}**")
 
+        # 수동 루틴 실행
+        @self.tree.command(name="morning", description="🌅 아침 루틴 즉시 실행 (한국장 분석)")
+        async def slash_morning(interaction: discord.Interaction):
+            await interaction.response.defer()
+            from src.scheduler.routines import run_morning_routine
+            try:
+                await interaction.followup.send("🌅 **아침 루틴 시작**\n한국장 분석 및 매수 추천을 실행합니다...")
+                await run_morning_routine(None)
+                await interaction.followup.send("✅ 아침 루틴 완료!")
+            except Exception as e:
+                await interaction.followup.send(f"❌ 아침 루틴 실패: {e}")
+
+        @self.tree.command(name="evening", description="🌙 저녁 루틴 즉시 실행 (미국장 분석)")
+        async def slash_evening(interaction: discord.Interaction):
+            await interaction.response.defer()
+            from src.scheduler.routines import run_evening_routine
+            try:
+                await interaction.followup.send("🌙 **저녁 루틴 시작**\n미국장 분석 및 포트폴리오 리포트를 실행합니다...")
+                await run_evening_routine(None)
+                await interaction.followup.send("✅ 저녁 루틴 완료!")
+            except Exception as e:
+                await interaction.followup.send(f"❌ 저녁 루틴 실패: {e}")
+
         # 2. 포트폴리오
         @self.tree.command(name="portfolio", description="포트폴리오 조회")
         async def slash_portfolio(interaction: discord.Interaction):

@@ -96,6 +96,10 @@ def main():
     parser.add_argument("--with-discord", action="store_true", help="스케줄러 + Discord 봇")
     parser.add_argument("--mode", choices=["real", "paper"], default="paper", help="실행 모드 (기본: paper)")
 
+    # 수동 루틴 실행
+    parser.add_argument("--morning", action="store_true", help="아침 루틴 즉시 실행 (KR)")
+    parser.add_argument("--evening", action="store_true", help="저녁 루틴 즉시 실행 (US)")
+
     # CLI Manual Actions (Optional)
     parser.add_argument("--action", choices=["price", "buy", "sell"], help="수동 작업")
     parser.add_argument("--code", type=str)
@@ -105,6 +109,19 @@ def main():
 
     # 초기 모드 설정
     state.set_mode(args.mode)
+    
+    # 수동 루틴 실행
+    if args.morning:
+        import asyncio
+        logger.info("🌅 아침 루틴 수동 실행")
+        asyncio.run(run_morning_routine(None))
+        return
+    
+    if args.evening:
+        import asyncio
+        logger.info("🌙 저녁 루틴 수동 실행")
+        asyncio.run(run_evening_routine(None))
+        return
 
     if args.action:
         # CLI 모드 복구
