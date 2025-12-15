@@ -121,7 +121,10 @@ class TradingBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True
-        super().__init__(command_prefix="!", intents=intents)
+        super().__init__(command_prefix="!", intents=intents)  # 기본 커맨드는 !로
+
+        # 대화 기록 저장소 {user_id: {'last_time': datetime, 'messages': []}}
+        self.conversations = {}
     
     async def setup_hook(self):
         """봇 시작 시 명령어 등록"""
@@ -262,18 +265,133 @@ class TradingBot(commands.Bot):
             code = stock_info["code"]
             name = stock_info.get("name", code)
             
-            # 가격 조회
-            client = get_kis_client(state.get_mode())
-            price = 0
-            try:
-                if stock_info["market"] == "KR":
-                    res = client.get_price(code)
-                    price = float(res["output"]["stck_prpr"])
-                else:
-                    res = client.get_overseas_price(stock_info.get("exchange", "NAS"), code)
-                    price = float(res["output"]["last"])
-            except:
-                pass
+            @self.tree.command(name="chat", description="AI 투자 비서와 대화하기")
+            @discord.app_commands.describe(query="질문할 내용")
+            async def slash_chat(interaction: discord.Interaction, query: str):
+                await interaction.response.defer()
+
+                import asyncio
+                from datetime import datetime, timedelta
+                from concurrent.futures import ThreadPoolExecutor
+                from src.analysis.llm_analyzer import chat_with_llm
+
+                user_id = interaction.user.id
+                now = datetime.now()
+
+                # 대화 기록 관리 (5분 세션)
+                history = []
+                if user_id in self.conversations:
+                    session = self.conversations[user_id]
+                    if now - session['last_time'] < timedelta(minutes=5):
+                        history = session['messages']
+                        # 너무 길어지면 앞부분 자르기 (최근 10턴 유지)
+                        if len(history) > 20:
+                            history = history[-20:]
+                    else:
+                        # 5분 지났으면 초기화
+                        history = []
+
+                try:
+                    # 스레드풀에서 실행 (Discord 하트비트 차단 방지)
+                    loop = asyncio.get_event_loop()
+                    with ThreadPoolExecutor() as pool:
+                        response = await loop.run_in_executor(pool, chat_with_llm, query, history)
+
+                    # 대화 기록 업데이트
+                    history.append({"role": "user", "content": query})
+                    history.append({"role": "assistant", "content": response})
+                    self.conversations[user_id] = {
+                        'last_time': now,
+                        'messages': history
+                    }
+
+                    # 메시지가 너무 길면 나눠서 보내기 (Discord 제한 2000자)
+                    # 첫 번째 메시지는 질문을 포함하므로 길이를 계산해야 함
+                    header_format = "🗨️ **질문**: {}\n\n🤖 **답변**:\n"
+                    # 질문이 너무 길면 자름 (최대 200자)
+                    display_query = query[:200] + "..." if len(query) > 200 else query
+                    header = header_format.format(display_query)
+
+                    # 첫 번째 청크가 들어갈 수 있는 공간 계산
+                    # 2000 (Discord 제한) - header 길이 - 여유분(10)
+                    first_chunk_size = 2000 - len(header) - 10
+                    if first_chunk_size < 100: # 공간이 너무 부족하면 질문 표시 생략하거나 별도 메시지로 처리해야 하지만 여기선 질문을 더 줄임
+                        display_query = display_query[:50] + "..."
+                        header = header_format.format(display_query)
+                        first_chunk_size = 2000 - len(header) - 10
+
+                    # 첫 번째 청크
+                    first_chunk = response[:first_chunk_size]
+                    remaining_response = response[first_chunk_size:]
+
+                    await interaction.followup.send(header + first_chunk)
+
+                    # 나머지 부분 전송 (1900자씩 끊어서)
+                    if remaining_response:
+                        for i in range(0, len(remaining_response), 1900):
+                            await interaction.followup.send(remaining_response[i:i+1900])
+
+                except Exception as e:
+                    await interaction.followup.send(f"❌ 대화 실패: {e}")
+
+            @self.tree.command(name="recommend", description="오늘의 추천 종목 3개")
+            async def slash_recommend(interaction: discord.Interaction):
+                await interaction.response.defer()
+                
+                import asyncio
+                from concurrent.futures import ThreadPoolExecutor
+                from src.data import fetch_news, get_market_data, generate_stock_chart
+                from src.analysis import get_daily_recommendations
+                
+                def get_recommendations():
+                    """동기 함수 - 추천 종목 조회"""
+                    market_data = get_market_data()
+                    news_data = fetch_news(max_items=10)
+                    recommendations = get_daily_recommendations(market_data, news_data)
+                    
+                    # 각 종목별 차트 생성
+                    charts = []
+                    for rec in recommendations:
+                        chart_path = generate_stock_chart(rec.stock_code, rec.stock_name, days=7)
+                        charts.append(chart_path)
+                    
+                    return recommendations, charts
+                
+                try:
+                    loop = asyncio.get_event_loop()
+                    with ThreadPoolExecutor() as pool:
+                        recommendations, charts = await loop.run_in_executor(pool, get_recommendations)
+                    
+                    if not recommendations:
+                        await interaction.followup.send("❌ 추천 종목을 찾을 수 없습니다.")
+                        return
+                    
+                    # 각 종목별 메시지 + 버튼 전송
+                    for i, rec in enumerate(recommendations):
+                        # 가격 정보
+                        emoji = "📈" if rec.change > 0 else "📉" if rec.change < 0 else "➖"
+                        color = "🔴" if rec.change > 0 else "🔵" if rec.change < 0 else "⚪"
+                        
+                        msg = f"**#{i+1} {rec.stock_name} ({rec.stock_code})**\n"
+                        msg += f"💰 현재가: **{rec.current_price:,}원**\n"
+                        msg += f"{emoji} 전일대비: {color} {rec.change:+,}원 ({rec.change_rate:+.2f}%)\n"
+                        msg += f"⭐ 확신도: {'⭐' * rec.confidence}{'☆' * (10 - rec.confidence)}\n\n"
+                        msg += f"📝 **추천 이유:**\n{rec.reason}"
+                        
+                        # 매수 버튼 View 생성
+                        view = BuyButtonView(rec.stock_code, rec.stock_name, rec.current_price)
+                        
+                        # 차트 이미지가 있으면 첨부
+                        chart_path = charts[i] if i < len(charts) else None
+                        if chart_path:
+                            file = discord.File(chart_path, filename=f"{rec.stock_code}_chart.png")
+                            await interaction.followup.send(msg, file=file, view=view)
+                        else:
+                            await interaction.followup.send(msg, view=view)
+                    
+                except Exception as e:
+                    logger.error(f"추천 종목 조회 실패: {e}")
+                    await interaction.followup.send(f"❌ 추천 종목 조회 실패: {e}")
             
             analysis = analyze_stock(code, name, price)
             await interaction.followup.send(f"📊 **{name} ({code})**\n{analysis}")
