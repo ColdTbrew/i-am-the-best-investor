@@ -10,7 +10,8 @@ from src.utils.discord_bot import (
     notify_error,
     notify_news_summary,
 )
-from src.utils.config import TRADING_MODE, RISK_CONFIG
+from src.utils.config import RISK_CONFIG
+from src.utils.state import state
 from src.trading import get_kis_client
 from src.analysis import analyze_for_buy, analyze_for_sell, TradeDecision
 from src.data import fetch_news, get_market_data as get_stock_data
@@ -29,7 +30,7 @@ class DailyTradingJob:
         """일일 매매 작업 실행"""
         logger.info("=" * 50)
         logger.info("일일 자동매매 작업 시작")
-        logger.info(f"거래 모드: {TRADING_MODE}")
+        logger.info(f"거래 모드: {state.get_mode()}")
         logger.info("=" * 50)
         
         # 시스템 시작 알림
