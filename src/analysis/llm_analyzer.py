@@ -374,27 +374,32 @@ JSON 배열만 응답하세요. 다른 텍스트 없이 JSON만."""
         return []
 
 
-def chat_with_llm(query: str) -> str:
+def chat_with_llm(query: str, history: list = None) -> str:
     """
     일반적인 LLM 대화 (Discord 채팅용)
 
     Args:
         query: 사용자 질문
+        history: 대화 기록 (선택 사항)
 
     Returns:
         LLM 응답
     """
-    prompt = """당신은 주식 투자 및 경제 분야에 정통한 친절한 AI 어시스턴트입니다.
+    system_prompt = """당신은 주식 투자 및 경제 분야에 정통한 친절한 AI 어시스턴트입니다.
 사용자의 질문에 대해 명확하고 도움이 되는 답변을 제공해주세요.
 투자에 관련된 질문에는 신중하게 답변하고, 투자는 본인의 책임임을 상기시켜주는 것이 좋습니다."""
+
+    messages = [{"role": "system", "content": system_prompt}]
+
+    if history:
+        messages.extend(history)
+
+    messages.append({"role": "user", "content": query})
 
     try:
         response = client.chat.completions.create(
             model=OPENAI_MODEL,
-            messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": query}
-            ],
+            messages=messages,
         )
 
         return response.choices[0].message.content

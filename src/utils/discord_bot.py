@@ -176,6 +176,9 @@ class TradingBot(commands.Bot):
         intents = discord.Intents.default()
         intents.message_content = True
         super().__init__(command_prefix="!", intents=intents)  # 기본 커맨드는 !로
+
+        # 대화 기록 저장소 {user_id: {'last_time': datetime, 'messages': []}}
+        self.conversations = {}
     
     async def setup_hook(self):
         """봇 시작 시 명령어 등록"""
@@ -704,14 +707,39 @@ class TradingBot(commands.Bot):
                 await interaction.response.defer()
 
                 import asyncio
+                from datetime import datetime, timedelta
                 from concurrent.futures import ThreadPoolExecutor
                 from src.analysis.llm_analyzer import chat_with_llm
+
+                user_id = interaction.user.id
+                now = datetime.now()
+
+                # 대화 기록 관리 (5분 세션)
+                history = []
+                if user_id in self.conversations:
+                    session = self.conversations[user_id]
+                    if now - session['last_time'] < timedelta(minutes=5):
+                        history = session['messages']
+                        # 너무 길어지면 앞부분 자르기 (최근 10턴 유지)
+                        if len(history) > 20:
+                            history = history[-20:]
+                    else:
+                        # 5분 지났으면 초기화
+                        history = []
 
                 try:
                     # 스레드풀에서 실행 (Discord 하트비트 차단 방지)
                     loop = asyncio.get_event_loop()
                     with ThreadPoolExecutor() as pool:
-                        response = await loop.run_in_executor(pool, chat_with_llm, query)
+                        response = await loop.run_in_executor(pool, chat_with_llm, query, history)
+
+                    # 대화 기록 업데이트
+                    history.append({"role": "user", "content": query})
+                    history.append({"role": "assistant", "content": response})
+                    self.conversations[user_id] = {
+                        'last_time': now,
+                        'messages': history
+                    }
 
                     # 메시지가 너무 길면 나눠서 보내기 (Discord 제한 2000자)
                     # 첫 번째 메시지는 질문을 포함하므로 길이를 계산해야 함
