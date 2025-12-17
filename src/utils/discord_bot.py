@@ -450,9 +450,12 @@ class TradingBot(commands.Bot):
             total_eval = int(output2.get("tot_evlu_amt", 0))
             cash = int(output2.get("dnca_tot_amt", 0))
             
+            stock_eval_total = sum(int(item.get("evlu_amt", 0)) for item in output1)
+
             msg = f"📊 **포트폴리오 ({mode.upper()})**\n"
             msg += f"💰 총 평가금액: {total_eval:,}원\n"
-            msg += f"💵 예수금: {cash:,}원\n\n"
+            msg += f"💵 예수금: {cash:,}원\n"
+            msg += f"📦 주식 평가금액: {stock_eval_total:,}원\n\n"
             
             if output1:
                 msg += "📈 **보유 종목**:\n"
@@ -461,9 +464,13 @@ class TradingBot(commands.Bot):
                     qty = int(item.get("hldg_qty", 0))
                     profit = float(item.get("evlu_pfls_rt", 0))
                     current = int(item.get("prpr", 0))
+                    buy_price = float(item.get("pchs_avg_pric", 0))
+                    eval_amt = int(item.get("evlu_amt", 0))
 
                     emoji = "🔴" if profit > 0 else "🔵" if profit < 0 else "⚪"
-                    msg += f"• {name}: {qty}주 @ {current:,}원 {emoji} ({profit:+.2f}%)\n"
+                    msg += f"• **{name}** ({qty}주) {emoji}\n"
+                    msg += f"  └ 매수가: {buy_price:,.0f}원 | 현재가: {current:,}원\n"
+                    msg += f"  └ 평가금액: {eval_amt:,}원 ({profit:+.2f}%)\n"
             else:
                 msg += "📭 보유 종목 없음"
             
