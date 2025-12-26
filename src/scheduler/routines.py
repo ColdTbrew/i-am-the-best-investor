@@ -7,11 +7,11 @@ from src.utils.state import state
 from src.trading import get_kis_client
 from src.analysis import analyze_stock, get_daily_recommendations
 from src.data import fetch_news, get_market_data, stock_search
-from src.utils.discord_bot import send_webhook_message
+from src.utils.discord_bot import send_webhook_message, send_recommendations_with_buttons, send_sell_recommendations_with_buttons
 
 logger = get_logger(__name__)
 
-async def run_morning_routine(scheduler=None):
+async def run_morning_routine(scheduler=None, channel=None):
     """아침 루틴 (한국장 08:00)"""
     logger.info("🌅 아침 루틴 시작 (한국장)")
 
@@ -20,11 +20,11 @@ async def run_morning_routine(scheduler=None):
 
     # 1. 한국 주식 추천 및 매수 예약
     try:
-        market_data = get_market_data()
-        news_data = fetch_news(max_items=20)
+        market_data = await asyncio.to_thread(get_market_data)
+        news_data = await asyncio.to_thread(fetch_news, max_items=20)
 
         # LLM 추천
-        recommendations = get_daily_recommendations(market_data, news_data, market="KR")
+        recommendations = await asyncio.to_thread(get_daily_recommendations, market_data, news_data, market="KR")
 
         embeds = []
         orders_to_schedule = []
@@ -32,7 +32,7 @@ async def run_morning_routine(scheduler=None):
         # 예산 계산 (총 예수금의 50%를 3분할)
         balance = None
         try:
-            balance = client.get_balance()
+            balance = await asyncio.to_thread(client.get_balance)
             output2 = balance.get("output2", [{}])[0]
             cash = int(output2.get("dnca_tot_amt", 0))
             budget_per_stock = int((cash * 0.5) / 3)
@@ -66,7 +66,8 @@ async def run_morning_routine(scheduler=None):
                         "price": 0 # 시장가
                     })
 
-        send_webhook_message("🌅 **오늘의 한국 주식 추천 (매수 예약)**", embeds=embeds)
+        # 버튼이 포함된 봇 메시지 발송 (웹훅 대신 사용)
+        await send_recommendations_with_buttons(recommendations, market="KR", channel=channel)
 
         # 09:00 매수 실행 예약
         if scheduler and orders_to_schedule:
@@ -93,20 +94,14 @@ async def run_morning_routine(scheduler=None):
                     sell_candidates.append(item)
 
             if sell_candidates:
-                sell_embeds = []
-                for item in sell_candidates:
-                    sell_embeds.append({
-                        "title": f"📉 매도 추천 (KR): {item['prdt_name']}",
-                        "description": f"수익률: {float(item['evlu_pfls_rt']):.2f}%",
-                        "color": 0xFF0000
-                    })
-                send_webhook_message("📉 **오늘의 매도 추천 (보유 중)**", embeds=sell_embeds)
+                # 버튼이 포함된 봇 메시지 발송 (웹훅 대신 사용)
+                await send_sell_recommendations_with_buttons(sell_candidates, market="KR", channel=channel)
 
     except Exception as e:
         logger.error(f"아침 루틴 실패: {e}")
         send_webhook_message(f"❌ 아침 루틴 에러: {e}")
 
-async def run_evening_routine(scheduler=None):
+async def run_evening_routine(scheduler=None, channel=None):
     """저녁 루틴 (미국장 22:00)"""
     logger.info("🌃 저녁 루틴 시작 (미국장)")
     mode = state.get_mode()
@@ -114,8 +109,8 @@ async def run_evening_routine(scheduler=None):
 
     try:
         # 1. 미국 주식 추천
-        news_data = fetch_news(max_items=20)
-        recommendations = get_daily_recommendations(None, news_data, market="US")
+        news_data = await asyncio.to_thread(fetch_news, max_items=20)
+        recommendations = await asyncio.to_thread(get_daily_recommendations, None, news_data, market="US")
 
         embeds = []
         orders_to_schedule = []
@@ -151,7 +146,8 @@ async def run_evening_routine(scheduler=None):
                         "price": rec.current_price # 지정가 (미국장은 시장가 제한 있을 수 있음)
                     })
 
-        send_webhook_message("🌃 **오늘의 미국 주식 추천**", embeds=embeds)
+        # 버튼이 포함된 봇 메시지 발송 (웹훅 대신 사용)
+        await send_recommendations_with_buttons(recommendations, market="US", channel=channel)
 
         # 23:30 매수 실행 예약
         if scheduler and orders_to_schedule:
@@ -171,7 +167,7 @@ async def run_evening_routine(scheduler=None):
         # 2. 매도 추천 (미국 보유 종목)
         try:
             # 해외 잔고 조회
-            ovs_balance = client.get_overseas_balance()
+            ovs_balance = await asyncio.to_thread(client.get_overseas_balance)
             holdings = ovs_balance.get("output1", [])
 
             sell_candidates = []
@@ -182,14 +178,8 @@ async def run_evening_routine(scheduler=None):
                     sell_candidates.append(item)
 
             if sell_candidates:
-                sell_embeds = []
-                for item in sell_candidates:
-                    sell_embeds.append({
-                        "title": f"📉 매도 추천 (US): {item['ovrs_pdno']}",
-                        "description": f"수익률: {float(item['evlu_pfls_rt']):.2f}%",
-                        "color": 0xFF0000
-                    })
-                send_webhook_message("📉 **오늘의 매도 추천 (미국 보유)**", embeds=sell_embeds)
+                # 버튼이 포함된 봇 메시지 발송 (웹훅 대신 사용)
+                await send_sell_recommendations_with_buttons(sell_candidates, market="US", channel=channel)
 
         except Exception as e:
             logger.warning(f"미국 잔고 조회 실패: {e}")

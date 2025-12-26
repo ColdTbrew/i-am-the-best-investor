@@ -17,6 +17,7 @@ dependencies = [
     "pykrx>=1.0.0",
     "setuptools>=80.9.0",
     "matplotlib>=3.10.8",
+    "playwright>=1.40.0",
 ]
 
 [project.optional-dependencies]

@@ -125,6 +125,7 @@ class TradingBot(commands.Bot):
 
         # 대화 기록 저장소 {user_id: {'last_time': datetime, 'messages': []}}
         self.conversations = {}
+        state.discord_bot = self
     
     async def setup_hook(self):
         """봇 시작 시 명령어 등록"""
@@ -156,7 +157,7 @@ class TradingBot(commands.Bot):
             from src.scheduler.routines import run_morning_routine
             try:
                 await interaction.followup.send("🌅 **아침 루틴 시작**\n한국장 분석 및 매수 추천을 실행합니다...")
-                await run_morning_routine(None)
+                await run_morning_routine(None, channel=interaction.channel)
                 await interaction.followup.send("✅ 아침 루틴 완료!")
             except Exception as e:
                 await interaction.followup.send(f"❌ 아침 루틴 실패: {e}")
@@ -167,7 +168,7 @@ class TradingBot(commands.Bot):
             from src.scheduler.routines import run_evening_routine
             try:
                 await interaction.followup.send("🌙 **저녁 루틴 시작**\n미국장 분석 및 포트폴리오 리포트를 실행합니다...")
-                await run_evening_routine(None)
+                await run_evening_routine(None, channel=interaction.channel)
                 await interaction.followup.send("✅ 저녁 루틴 완료!")
             except Exception as e:
                 await interaction.followup.send(f"❌ 저녁 루틴 실패: {e}")
@@ -207,7 +208,7 @@ class TradingBot(commands.Bot):
                 mode = state.get_mode()
                 client = get_kis_client(mode)
 
-                res = client.buy_stock(code, quantity)
+                res = await asyncio.to_thread(client.buy_stock, code, quantity)
 
                 if res.get("rt_cd") == "0":
                     msg = f"📈 **매수 주문 전송 ({mode.upper()})**\n"
@@ -252,7 +253,7 @@ class TradingBot(commands.Bot):
                 mode = state.get_mode()
                 client = get_kis_client(mode)
                 
-                res = client.sell_stock(code, quantity)
+                res = await asyncio.to_thread(client.sell_stock, code, quantity)
                 
                 if res.get("rt_cd") == "0":
                     msg = f"📉 **매도 주문 전송 ({mode.upper()})**\n"
@@ -293,17 +294,17 @@ class TradingBot(commands.Bot):
                 price = 0
 
                 if market == "KR":
-                    res = client.get_price(code)
+                    res = await asyncio.to_thread(client.get_price, code)
                     if res and 'output' in res:
                         price = float(res['output'].get('stck_prpr', 0))
                 else:
                     # US
                     exchange = stock_info.get("exchange", "NAS")
-                    res = client.get_overseas_price(exchange, code)
+                    res = await asyncio.to_thread(client.get_overseas_price, exchange, code)
                     if res and 'output' in res:
                         price = float(res['output'].get('last', 0))
 
-                analysis = analyze_stock(code, name, price)
+                analysis = await asyncio.to_thread(analyze_stock, code, name, price)
                 await interaction.followup.send(f"📊 **{name} ({code})**\n{analysis}")
             except Exception as e:
                  await interaction.followup.send(f"❌ 분석 중 에러 발생: {e}")
@@ -459,7 +460,7 @@ class TradingBot(commands.Bot):
         try:
             mode = state.get_mode()
             client = get_kis_client(mode)
-            balance = client.get_balance()
+            balance = await asyncio.to_thread(client.get_balance)
 
             output1 = balance.get("output1", [])
             output2 = balance.get("output2", [{}])[0]
@@ -496,6 +497,218 @@ class TradingBot(commands.Bot):
                 await interaction.followup.send(msg)
             else:
                 await interaction.followup.send(msg)
+        except Exception as e:
+            logger.error(f"포트폴리오 조회 실패: {e}")
+            await interaction.followup.send(f"❌ 포트폴리오 조회 중 에러 발생: {e}")
+
+
+class BuyButtonView(discord.ui.View):
+    """추천 종목 매수 버튼 View"""
+    def __init__(self, stock_code: str, stock_name: str, price: float):
+        super().__init__(timeout=None)
+        self.stock_code = stock_code
+        self.stock_name = stock_name
+        self.price = price
+
+    @discord.ui.button(label="1주 즉시 매수", style=discord.ButtonStyle.green, custom_id="buy_now_btn")
+    async def buy_now(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """즉시 매수 버튼 클릭 시 실행"""
+        from src.trading import get_kis_client
+        
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            mode = state.get_mode()
+            client = get_kis_client(mode)
+            
+            # 시장가 매수
+            res = await asyncio.to_thread(client.buy_stock, self.stock_code, 1)
+            
+            if res.get("rt_cd") == "0":
+                await interaction.followup.send(
+                    f"✅ **매수 완료 ({mode.upper()})**\n종목: {self.stock_name} ({self.stock_code})\n수량: 1주\n주문번호: {res.get('output', {}).get('ODNO')}",
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send(f"❌ 매수 실패: {res.get('msg1')}", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ 에러 발생: {e}", ephemeral=True)
+
+    @discord.ui.button(label="취소", style=discord.ButtonStyle.secondary, custom_id="cancel_btn")
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("취소되었습니다.", ephemeral=True)
+
+
+class SellButtonView(discord.ui.View):
+    """추천 종목 매도 버튼 View"""
+    def __init__(self, stock_code: str, stock_name: str, quantity: int):
+        super().__init__(timeout=None)
+        self.stock_code = stock_code
+        self.stock_name = stock_name
+        self.quantity = quantity
+
+    @discord.ui.button(label="전량 즉시 매도", style=discord.ButtonStyle.red, custom_id="sell_now_btn")
+    async def sell_now(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """즉시 매도 버튼 클릭 시 실행"""
+        from src.trading import get_kis_client
+        
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            mode = state.get_mode()
+            client = get_kis_client(mode)
+            
+            # 전량 매도
+            res = await asyncio.to_thread(client.sell_stock, self.stock_code, self.quantity)
+            
+            if res.get("rt_cd") == "0":
+                await interaction.followup.send(
+                    f"✅ **매도 완료 ({mode.upper()})**\n종목: {self.stock_name} ({self.stock_code})\n수량: {self.quantity}주\n주문번호: {res.get('output', {}).get('ODNO')}",
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send(f"❌ 매도 실패: {res.get('msg1')}", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ 에러 발생: {e}", ephemeral=True)
+
+
+async def send_recommendations_with_buttons(recommendations, market="KR", channel=None):
+    """스케줄러/루틴에서 버튼이 포함된 추천 메시지 전송"""
+    if not state.discord_bot:
+        logger.warning("Discord 봇이 초기화되지 않아 메시지를 보낼 수 없습니다.")
+        return False
+        
+    try:
+        bot = state.discord_bot
+        target_channel = channel
+        
+        if not target_channel:
+            logger.info(f"채널 탐색 시작 (봇이 참여 중인 서버 수: {len(bot.guilds)})")
+            for guild in bot.guilds:
+                # 보낼 수 있는 채널 후보들
+                candidates = []
+                if guild.system_channel:
+                    candidates.append(guild.system_channel)
+                
+                for c in guild.text_channels:
+                    candidates.append(c)
+                
+                # 권한 재검증 및 최종 선택
+                for cand in candidates:
+                    perms = cand.permissions_for(guild.me)
+                    if perms.send_messages and perms.embed_links:
+                        target_channel = cand
+                        logger.info(f"메시지 전송 채널 선택됨: [{guild.name}] #{cand.name}")
+                        break
+                
+                if target_channel: break
+            
+        if not target_channel:
+            logger.error("메시지를 보낼 수 있는 채널을 찾지 못했습니다. (권한 부족 또는 서버 없음)")
+            return False
+
+        await target_channel.send(f"🌅 **오늘의 {market} 추천 종목 (봇 직접 알림)**")
+        
+        for rec in recommendations:
+            emoji = "📈" if rec.change > 0 else "📉" if rec.change < 0 else "➖"
+            color = 0x00FF00 if rec.change >= 0 else 0xFF0000
+            
+            embed = discord.Embed(
+                title=f"{rec.stock_name} ({rec.stock_code})",
+                description=rec.reason,
+                color=color,
+                timestamp=datetime.now()
+            )
+            embed.add_field(name="현재가", value=f"{rec.current_price:,.0f}원" if market=="KR" else f"${rec.current_price:,.2f}", inline=True)
+            embed.add_field(name="확신도", value="⭐" * rec.confidence, inline=True)
+            
+            view = BuyButtonView(rec.stock_code, rec.stock_name, rec.current_price)
+            await target_channel.send(embed=embed, view=view)
+            
+        return True
+    except Exception as e:
+        logger.error(f"봇 추천 메시지 전송 실패: {e}")
+        # 웹훅으로 폴백
+        try:
+            embeds = []
+            for rec in recommendations:
+                embeds.append({
+                    "title": f"🌅 오늘의 추천 ({market}): {rec.stock_name}",
+                    "description": rec.reason,
+                    "fields": [
+                        {"name": "코드", "value": rec.stock_code, "inline": True},
+                        {"name": "현재가", "value": f"{rec.current_price:,.0f}원" if market=="KR" else f"${rec.current_price:,.2f}", "inline": True},
+                        {"name": "확신도", "value": f"{rec.confidence}/10", "inline": True},
+                    ],
+                    "color": 0x00FF00 if rec.change >= 0 else 0xFF0000
+                })
+            send_webhook_message(f"🌅 **오늘의 {market} 추천 종목**", embeds=embeds)
+            logger.info("웹훅으로 폴백 전송 완료")
+        except Exception as we:
+            logger.error(f"웹훅 폴백도 실패: {we}")
+        return False
+
+
+async def send_sell_recommendations_with_buttons(candidates, market="KR", channel=None):
+    """매도 추천 알림 (버튼 포함)"""
+    if not state.discord_bot or not candidates:
+        return False
+        
+    try:
+        bot = state.discord_bot
+        target_channel = channel
+        
+        if not target_channel:
+            for guild in bot.guilds:
+                for cand in guild.text_channels:
+                    perms = cand.permissions_for(guild.me)
+                    if perms.send_messages and perms.embed_links:
+                        target_channel = cand
+                        break
+                if target_channel: break
+            
+        if not target_channel:
+            logger.error("매도 추천을 보낼 채널을 찾지 못했습니다.")
+            return False
+
+        await target_channel.send(f"📉 **보유 종목 매도 추천 ({market})**")
+        
+        for item in candidates:
+            name = item.get("prdt_name", item.get("ovrs_pdno", "알수없음"))
+            code = item.get("pdno", item.get("ovrs_pdno", ""))
+            qty = int(item.get("hldg_qty", item.get("ord_psbl_qty", 0)))
+            profit = float(item.get("evlu_pfls_rt", 0))
+            
+            embed = discord.Embed(
+                title=f"{name} ({code})",
+                description=f"현재 수익률: **{profit:+.2f}%**\n보유 수량: {qty}주",
+                color=0xFF0000,
+                timestamp=datetime.now()
+            )
+            
+            view = SellButtonView(code, name, qty)
+            await target_channel.send(embed=embed, view=view)
+            
+        return True
+    except Exception as e:
+        logger.error(f"매도 추천 메시지 전송 실패: {e}")
+        # 웹훅으로 폴백
+        try:
+            embeds = []
+            for item in candidates:
+                name = item.get("prdt_name", item.get("ovrs_pdno", "알수없음"))
+                code = item.get("pdno", item.get("ovrs_pdno", ""))
+                profit = float(item.get("evlu_pfls_rt", 0))
+                embeds.append({
+                    "title": f"📉 매도 추천 ({market}): {name}",
+                    "description": f"수익률: {profit:+.2f}%",
+                    "color": 0xFF0000
+                })
+            send_webhook_message(f"📉 **오늘의 {market} 매도 추천**", embeds=embeds)
+            logger.info("매도 추천 웹훅 폴백 전송 완료")
+        except Exception as we:
+            logger.error(f"매도 웹훅 폴백도 실패: {we}")
+        return False
 
 
 def run_discord_bot():

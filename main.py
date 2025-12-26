@@ -17,7 +17,7 @@ from src.scheduler.routines import run_morning_routine, run_evening_routine
 from src.trading.momentum import check_momentum_and_scalp, sell_all_scalps
 
 logger = get_logger("main")
-scheduler = BlockingScheduler()  # Global scheduler instance
+scheduler = BlockingScheduler(timezone='Asia/Seoul')  # Global scheduler instance with Korea timezone
 
 def run_scheduler():
     """스케줄러 모드 실행"""
@@ -94,7 +94,7 @@ def main():
     parser = argparse.ArgumentParser(description="LLM 기반 자동매매 봇")
     parser.add_argument("--discord-bot", action="store_true", help="Discord 봇 모드")
     parser.add_argument("--with-discord", action="store_true", help="스케줄러 + Discord 봇")
-    parser.add_argument("--mode", choices=["real", "paper"], default="paper", help="실행 모드 (기본: paper)")
+    parser.add_argument("--mode", choices=["real", "paper"], default="real", help="실행 모드 (기본: real)")
 
     # 수동 루틴 실행
     parser.add_argument("--morning", action="store_true", help="아침 루틴 즉시 실행 (KR)")

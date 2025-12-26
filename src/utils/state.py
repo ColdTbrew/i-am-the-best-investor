@@ -6,7 +6,8 @@ class GlobalState:
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(GlobalState, cls).__new__(cls)
-            cls._instance.trading_mode = "paper"  # 기본값
+            cls._instance.trading_mode = "real"  # 기본값
+            cls._instance.discord_bot = None  # 디스코드 봇 인스턴스
         return cls._instance
 
     def set_mode(self, mode: str):

@@ -149,6 +149,14 @@ class KISClient:
                 raise Exception(f"KIS API Error ({self.mode}): {error_msg}")
 
             return data
+        except httpx.HTTPStatusError as e:
+            error_body = ""
+            try:
+                error_body = e.response.text
+            except:
+                pass
+            logger.error(f"[{self.mode}] HTTP 에러 ({e.response.status_code}): {e}\nResponse: {error_body}")
+            raise
         except Exception as e:
             logger.error(f"[{self.mode}] 요청 실패: {e}")
             raise

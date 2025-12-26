@@ -1,5 +1,6 @@
 """LLM 기반 투자 분석 엔진"""
 import json
+import time
 from dataclasses import dataclass
 from typing import Optional, List
 
@@ -67,6 +68,7 @@ def analyze_for_buy(market_data: dict, news_data: list, budget: int) -> list[Tra
 매수할 종목이 없으면 []을 반환하세요.
 """
 
+    logger.info(f"🤖 [analyze_for_buy] LLM 프롬프트:\n{prompt}")
     try:
         response = client.chat.completions.create(
             model=OPENAI_MODEL,
@@ -74,7 +76,9 @@ def analyze_for_buy(market_data: dict, news_data: list, budget: int) -> list[Tra
             response_format={"type": "json_object"},
         )
         
-        result = json.loads(response.choices[0].message.content)
+        raw_content = response.choices[0].message.content
+        logger.info(f"🤖 [analyze_for_buy] LLM 응답: {raw_content}")
+        result = json.loads(raw_content)
         
         if isinstance(result, dict):
             result = result.get("recommendations", result.get("stocks", []))
@@ -152,6 +156,7 @@ def analyze_for_sell(portfolio: list[dict], news_data: list) -> list[TradeDecisi
 ]
 """
 
+    logger.info(f"🤖 [analyze_for_sell] LLM 프롬프트:\n{prompt}")
     try:
         response = client.chat.completions.create(
             model=OPENAI_MODEL,
@@ -159,7 +164,9 @@ def analyze_for_sell(portfolio: list[dict], news_data: list) -> list[TradeDecisi
             response_format={"type": "json_object"},
         )
         
-        result = json.loads(response.choices[0].message.content)
+        raw_content = response.choices[0].message.content
+        logger.info(f"🤖 [analyze_for_sell] LLM 응답: {raw_content}")
+        result = json.loads(raw_content)
         
         if isinstance(result, dict):
             result = result.get("recommendations", result.get("stocks", []))
@@ -199,12 +206,15 @@ def analyze_stock(stock_code: str, stock_name: str, current_price: float,
 이 종목의 투자 매력도, 단기 전망, 매수/매도 의견을 3-4문장으로 요약해주세요.
 """
 
+    logger.info(f"🤖 [analyze_stock] LLM 프롬프트:\n{prompt}")
     try:
         response = client.chat.completions.create(
             model=OPENAI_MODEL,
             messages=[{"role": "user", "content": prompt}],
         )
-        return response.choices[0].message.content
+        content = response.choices[0].message.content
+        logger.info(f"🤖 [analyze_stock] LLM 응답: {content}")
+        return content
     except Exception as e:
         return f"분석 오류: {e}"
 
@@ -238,17 +248,20 @@ def get_daily_recommendations(market_data: dict, news_data: list, market: str = 
 오늘 {market} 시장에서 매수하기 좋은 종목 3개를 추천해주세요.
 단기 상승 가능성이 높은 종목 위주로 선정하세요.
 
-JSON 배열로 응답:
-[
-  {{
-    "stock_code": "005930" 또는 "AAPL",
-    "stock_name": "종목명",
-    "reason": "추천 이유",
-    "confidence": 8
-  }}
-]
+반드시 아래와 같은 JSON 객체 형식으로 응답하세요:
+{{
+  "recommendations": [
+    {{
+      "stock_code": "005930" 또는 "AAPL",
+      "stock_name": "종목명",
+      "reason": "추천 이유",
+      "confidence": 8
+    }}
+  ]
+}}
 """
 
+    logger.info(f"🤖 [get_daily_recommendations] LLM 프롬프트:\n{prompt}")
     try:
         response = client.chat.completions.create(
             model=OPENAI_MODEL,
@@ -256,7 +269,9 @@ JSON 배열로 응답:
             response_format={"type": "json_object"},
         )
         
-        result = json.loads(response.choices[0].message.content)
+        raw_content = response.choices[0].message.content
+        logger.info(f"🤖 [get_daily_recommendations] LLM 응답: {raw_content}")
+        result = json.loads(raw_content)
         if isinstance(result, dict):
             result = result.get("recommendations", result.get("stocks", []))
         
@@ -270,6 +285,9 @@ JSON 배열로 응답:
         recommendations = []
         
         for item in result[:3]:
+            # API 초당 호출 제한 준수
+            time.sleep(0.5)
+            
             code = str(item.get("stock_code", "")).strip()
             name = item.get("stock_name", "")
             
@@ -345,13 +363,16 @@ def chat_with_llm(query: str, history: list = None) -> str:
 
     messages.append({"role": "user", "content": query})
 
+    logger.info(f"🤖 [chat_with_llm] LLM 프롬프트: {query}")
     try:
         response = client.chat.completions.create(
             model=OPENAI_MODEL,
             messages=messages,
         )
 
-        return response.choices[0].message.content
+        content = response.choices[0].message.content
+        logger.info(f"🤖 [chat_with_llm] LLM 응답: {content}")
+        return content
 
     except Exception as e:
         logger.error(f"LLM 채팅 실패: {e}")

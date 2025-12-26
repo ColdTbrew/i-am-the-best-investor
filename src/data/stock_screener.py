@@ -1,4 +1,5 @@
 """종목 스크리닝 모듈 - 코스피 상장 + 흑자 기업"""
+import time
 from typing import Optional
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -143,12 +144,17 @@ def get_market_data() -> dict:
         "filter": "코스피 상장 + 흑자 기업",
     }
     
+    logger.info("🔍 시장 데이터 수집 시작 (코스피 흑자 기업)")
+    
     # 코스피 흑자 기업 리스트
     watchlist = get_kospi_profitable_stocks()
     
     # 관심 종목 시세 조회
     for stock in watchlist:
         try:
+            # API 초당 호출 제한(모의투자 2건/초) 준수를 위한 지연
+            time.sleep(0.5)
+            
             price_data = client.get_price(stock["code"])
             output = price_data.get("output", {})
             
@@ -165,6 +171,7 @@ def get_market_data() -> dict:
                 "is_profitable": True,
             }
             market_data["stocks"].append(stock_info)
+            logger.info(f"✅ [{stock['name']}] 현재가: {stock_info['current_price']:,}원 ({stock_info['change_rate']}% 상승)")
             
         except Exception as e:
             logger.warning(f"{stock['name']} 시세 조회 실패: {e}")

@@ -13,8 +13,8 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# 한글 폰트 설정 (macOS)
-plt.rcParams['font.family'] = 'AppleGothic'
+# 한글 폰트 설정 (Linux: NanumGothic)
+plt.rcParams['font.family'] = 'NanumGothic'
 plt.rcParams['axes.unicode_minus'] = False
 
 

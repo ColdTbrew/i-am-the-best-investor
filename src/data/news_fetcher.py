@@ -26,12 +26,13 @@ class NewsItem:
     summary: str = ""
 
 
-def fetch_news(max_items: int = 20) -> list[dict]:
+def fetch_news(max_items: int = 20, extract_content: bool = False) -> list[dict]:
     """
     여러 소스에서 뉴스 수집
     
     Args:
         max_items: 최대 수집 개수
+        extract_content: True면 기사 본문도 추출 (느림)
     
     Returns:
         뉴스 리스트 (dict 형태)
@@ -60,6 +61,30 @@ def fetch_news(max_items: int = 20) -> list[dict]:
         key=lambda x: x.get("published", ""), 
         reverse=True
     )[:max_items]
+    
+    # 본문 추출 (옵션)
+    if extract_content:
+        try:
+            import asyncio
+            from src.data.article_extractor import extract_multiple_articles
+            
+            urls = [item["link"] for item in unique_news]
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # 이미 이벤트 루프가 돌고 있으면 새 스레드에서 실행
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(asyncio.run, extract_multiple_articles(urls))
+                    contents = future.result()
+            else:
+                contents = loop.run_until_complete(extract_multiple_articles(urls))
+            
+            for item in unique_news:
+                item["content"] = contents.get(item["link"], "")
+                
+            logger.info("뉴스 본문 추출 완료")
+        except Exception as e:
+            logger.warning(f"뉴스 본문 추출 실패: {e}")
     
     logger.info(f"총 {len(unique_news)}개 뉴스 수집 완료")
     return unique_news
