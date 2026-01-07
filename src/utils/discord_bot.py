@@ -450,6 +450,120 @@ class TradingBot(commands.Bot):
             except:
                 await interaction.followup.send("❌ 뉴스 조회 실패")
 
+        # 5. 관심종목 (Favorites)
+        fav_group = discord.app_commands.Group(name="fav", description="관심종목 관리")
+
+        @fav_group.command(name="list", description="관심종목 시세 조회")
+        async def fav_list(interaction: discord.Interaction):
+            await interaction.response.defer()
+            from src.utils.favorites import favorites_manager
+            from src.trading import get_kis_client
+            import asyncio
+
+            user_id = interaction.user.id
+            favs = favorites_manager.get_favorites(user_id)
+
+            if not favs:
+                await interaction.followup.send("📭 관심종목이 없습니다. `/fav add`로 추가해보세요.")
+                return
+
+            client = get_kis_client()
+
+            # Helper to fetch single price synchronously
+            def get_price_sync(item):
+                code = item["code"]
+                market = item["market"]
+                name = item["name"]
+                try:
+                    price = 0
+                    change = 0
+                    change_rate = 0
+
+                    if market == "KR":
+                        res = client.get_price(code)
+                        if res and 'output' in res:
+                            price = float(res['output']['stck_prpr'])
+                            change = float(res['output']['prdy_vrss'])
+                            change_rate = float(res['output']['prdy_ctrt'])
+                    else:
+                        exchange = item.get("exchange", "NAS")
+                        res = client.get_overseas_price(exchange, code)
+                        if res and 'output' in res:
+                            price = float(res['output']['last'])
+                            change = float(res['output']['diff'])
+                            change_rate = float(res['output']['rate'])
+
+                    return {
+                        "name": name,
+                        "code": code,
+                        "price": price,
+                        "change": change,
+                        "change_rate": change_rate,
+                        "market": market
+                    }
+                except Exception as e:
+                    return {"name": name, "code": code, "error": str(e)}
+
+            # Run in parallel
+            loop = asyncio.get_running_loop()
+            futures = [loop.run_in_executor(None, get_price_sync, item) for item in favs]
+            results = await asyncio.gather(*futures)
+
+            msg = "⭐ **관심종목 시세**\n"
+            for res in results:
+                if "error" in res:
+                    msg += f"• **{res['name']}** ({res['code']}): ❌ 조회 실패\n"
+                    continue
+
+                emoji = "🔴" if res['change'] > 0 else "🔵" if res['change'] < 0 else "⚪"
+                price_fmt = f"{res['price']:,.0f}원" if res['market'] == "KR" else f"${res['price']:,.2f}"
+                change_fmt = f"{res['change']:+,.0f}" if res['market'] == "KR" else f"{res['change']:+,.2f}"
+
+                msg += f"• **{res['name']}** ({res['code']}) {emoji}\n"
+                msg += f"  └ {price_fmt} ({change_fmt}, {res['change_rate']:+.2f}%)\n"
+
+            await interaction.followup.send(msg)
+
+        @fav_group.command(name="add", description="관심종목 추가")
+        @discord.app_commands.describe(query="종목명 또는 코드")
+        async def fav_add(interaction: discord.Interaction, query: str):
+            from src.utils.favorites import favorites_manager
+            from src.data.stock_search import search_stock
+
+            stock_info = search_stock(query)
+            if not stock_info:
+                await interaction.response.send_message(f"❌ '{query}' 종목을 찾을 수 없습니다.", ephemeral=True)
+                return
+
+            user_id = interaction.user.id
+            if await favorites_manager.add_favorite(user_id, stock_info):
+                name = stock_info.get("name", stock_info["code"])
+                await interaction.response.send_message(f"✅ **{name}** 관심종목 추가 완료!", ephemeral=True)
+            else:
+                await interaction.response.send_message(f"⚠️ 이미 관심종목에 있습니다.", ephemeral=True)
+
+        @fav_group.command(name="remove", description="관심종목 제거")
+        @discord.app_commands.describe(query="종목명 또는 코드")
+        async def fav_remove(interaction: discord.Interaction, query: str):
+            from src.utils.favorites import favorites_manager
+            from src.data.stock_search import search_stock
+
+            stock_info = search_stock(query)
+            if not stock_info:
+                 await interaction.response.send_message(f"❌ '{query}' 종목을 찾을 수 없습니다.", ephemeral=True)
+                 return
+
+            code = stock_info["code"]
+            name = stock_info.get("name", code)
+            user_id = interaction.user.id
+
+            if await favorites_manager.remove_favorite(user_id, code):
+                await interaction.response.send_message(f"🗑️ **{name}** 관심종목 삭제 완료!", ephemeral=True)
+            else:
+                await interaction.response.send_message(f"⚠️ 관심종목에 없는 종목입니다.", ephemeral=True)
+
+        self.tree.add_command(fav_group)
+
         synced = await self.tree.sync()
         logger.info(f"슬래시 명령어 {len(synced)}개 동기화 완료")
 
