@@ -209,6 +209,26 @@ class KISClient:
         
         return self._request("GET", path, tr_id, params=params)
 
+    def get_overseas_ohlcv(self, exchange: str, symbol: str, 
+                          start_date: str, end_date: str, period: str = "D") -> dict:
+        """해외주식 일봉/주봉/월봉 조회"""
+        tr_id = "HHDFS00000300" # NOTE: Using the same as price if no dedicated ohlcv for overseas in basic setup
+        # Actually, for KIS, overseas OHLCV is HHDFS76240000 or similar
+        tr_id = "HHDFS76240000"
+        path = "/uapi/overseas-price/v1/quotations/dailyprice"
+        
+        # period: D(일), W(주), M(월)
+        params = {
+            "AUTH": "",
+            "EXCD": exchange,
+            "SYMB": symbol,
+            "GUBN": "0", # 0: 일봉, 1: 주봉, 2: 월봉
+            "BYMD": end_date, # 기준일자
+            "MODP": "Y", # 수정주가 여부
+        }
+        
+        return self._request("GET", path, tr_id, params=params)
+
     def get_overseas_balance(self) -> dict:
         """해외주식 잔고 조회"""
         tr_id = "TTTS3012R"  # 해외주식 체결기준잔고

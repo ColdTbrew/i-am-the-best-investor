@@ -387,24 +387,68 @@ class TradingBot(commands.Bot):
             from src.data import fetch_news, get_market_data, generate_stock_chart
             from src.analysis import get_daily_recommendations
 
-            def get_recommendations():
-                """동기 함수 - 추천 종목 조회"""
+            def get_recommendations_with_prediction():
+                """동기 함수 - 추천 종목 조회 및 예측 차트 생성"""
+                from src.analysis.price_predictor import predictor
+                from src.trading import get_kis_client
+                from pykrx import stock as pykrx_stock
+                
                 market_data = get_market_data()
                 news_data = fetch_news(max_items=10)
                 recommendations = get_daily_recommendations(market_data, news_data)
                 
-                # 각 종목별 차트 생성
+                client = get_kis_client()
                 charts = []
+                
                 for rec in recommendations:
-                    chart_path = generate_stock_chart(rec.stock_code, rec.stock_name, days=7)
-                    charts.append(chart_path)
+                    try:
+                        # 1. 1개월치 과거 데이터 수집 (30일 + 여유)
+                        end_date = datetime.now()
+                        start_date = end_date - timedelta(days=45)
+                        
+                        prices = []
+                        if len(rec.stock_code) == 6 and rec.stock_code.isdigit():
+                            # 한국 주식
+                            df = pykrx_stock.get_market_ohlcv(
+                                start_date.strftime("%Y%m%d"),
+                                end_date.strftime("%Y%m%d"),
+                                rec.stock_code
+                            )
+                            if not df.empty:
+                                prices = df['종가'].tail(30).to_list()
+                        else:
+                            # 미국 주식
+                            from src.data.stock_search import search_stock
+                            stock_info = search_stock(rec.stock_code)
+                            exchange = stock_info.get("exchange", "NASD") if stock_info else "NASD"
+                            
+                            res = client.get_overseas_ohlcv(exchange, rec.stock_code, 
+                                                         start_date.strftime("%Y%m%d"), 
+                                                         end_date.strftime("%Y%m%d"))
+                            output = res.get("output2", [])
+                            if output:
+                                # KIS 해외 일봉은 역순일 수 있음 확인 필요 (보통 최신이 앞)
+                                prices = [float(x['clos']) for x in reversed(output[:30])]
+                        
+                        # 2. 예측 수행
+                        prediction = None
+                        if len(prices) >= 10:
+                            prediction = predictor.predict_3day_trend(prices)
+                        
+                        # 3. 차트 생성 (예측 포함)
+                        chart_path = generate_stock_chart(rec.stock_code, rec.stock_name, 
+                                                        days=30, prediction_data=prediction)
+                        charts.append(chart_path)
+                    except Exception as e:
+                        logger.error(f"{rec.stock_name} 예측/차트 생성 실패: {e}")
+                        charts.append(None)
                 
                 return recommendations, charts
 
             try:
                 loop = asyncio.get_event_loop()
                 with ThreadPoolExecutor() as pool:
-                    recommendations, charts = await loop.run_in_executor(pool, get_recommendations)
+                    recommendations, charts = await loop.run_in_executor(pool, get_recommendations_with_prediction)
 
                 if not recommendations:
                     await interaction.followup.send("❌ 추천 종목을 찾을 수 없습니다.")
@@ -416,11 +460,17 @@ class TradingBot(commands.Bot):
                     emoji = "📈" if rec.change > 0 else "📉" if rec.change < 0 else "➖"
                     color = "🔴" if rec.change > 0 else "🔵" if rec.change < 0 else "⚪"
                     
+                    price_str = f"**{rec.current_price:,}원**" if len(rec.stock_code) == 6 else f"**${rec.current_price:,.2f}**"
+                    change_str = f"{rec.change:+,}원" if len(rec.stock_code) == 6 else ""
+
                     msg = f"**#{i+1} {rec.stock_name} ({rec.stock_code})**\n"
-                    msg += f"💰 현재가: **{rec.current_price:,}원**\n"
-                    msg += f"{emoji} 전일대비: {color} {rec.change:+,}원 ({rec.change_rate:+.2f}%)\n"
+                    msg += f"💰 현재가: {price_str}\n"
+                    msg += f"{emoji} 전일대비: {color} {change_str} ({rec.change_rate:+.2f}%)\n"
                     msg += f"⭐ 확신도: {'⭐' * rec.confidence}{'☆' * (10 - rec.confidence)}\n\n"
-                    msg += f"📝 **추천 이유:**\n{rec.reason}"
+                    msg += f"📝 **추천 이유:**\n{rec.reason}\n\n"
+                    msg += f"🔮 **AI 가격 예측 (향후 3일)**:\n"
+                    msg += f"└ 🚀 Bull Case (상위 10%): 높은 확률로 추가 상승 가능성\n"
+                    msg += f"└ 📉 Bear Case (하위 10%): 시장 변동 시 하락 지지선\n"
                     
                     # 매수 버튼 View 생성
                     view = BuyButtonView(rec.stock_code, rec.stock_name, rec.current_price)
@@ -436,6 +486,107 @@ class TradingBot(commands.Bot):
             except Exception as e:
                 logger.error(f"추천 종목 조회 실패: {e}")
                 await interaction.followup.send(f"❌ 추천 종목 조회 실패: {e}")
+
+        @self.tree.command(name="recommend-by-model", description="AI 모델 예측 기반 기대 수익률 상위 종목 추천")
+        async def slash_recommend_by_model(interaction: discord.Interaction):
+            await interaction.response.defer()
+
+            import asyncio
+            from concurrent.futures import ThreadPoolExecutor
+            from src.data.stock_screener import KOSPI_WATCHLIST
+            from src.analysis.price_predictor import predictor
+            from src.data import generate_stock_chart
+            from pykrx import stock as pykrx_stock
+            from datetime import datetime, timedelta
+
+            def analyze_candidates():
+                """동기 함수 - 모든 후보 종목 예측 후 수익률 상위 추출"""
+                candidates = KOSPI_WATCHLIST # 후보군 (코스피 우량주 16종)
+                results = []
+
+                end_date = datetime.now()
+                start_date = end_date - timedelta(days=45)
+
+                for stock in candidates:
+                    try:
+                        # 1. 데이터 수집
+                        df = pykrx_stock.get_market_ohlcv(
+                            start_date.strftime("%Y%m%d"),
+                            end_date.strftime("%Y%m%d"),
+                            stock["code"]
+                        )
+                        if df.empty: continue
+                        
+                        prices = df['종가'].tail(30).to_list()
+                        current_price = prices[-1]
+
+                        # 2. 예측
+                        prediction = None
+                        expected_return = -999.0
+                        
+                        if len(prices) >= 10:
+                            prediction = predictor.predict_3day_trend(prices)
+                            if prediction:
+                                # 기대 수익률: (3일 뒤 중간값 - 현재가) / 현재가
+                                target_price = prediction['median'][-1]
+                                expected_return = (target_price - current_price) / current_price * 100
+
+                        results.append({
+                            "code": stock["code"],
+                            "name": stock["name"],
+                            "current_price": current_price,
+                            "expected_return": expected_return,
+                            "prediction": prediction,
+                            "change": int(df['종가'].iloc[-1] - df['종가'].iloc[-2]) if len(df) > 1 else 0,
+                            "change_rate": float((df['종가'].iloc[-1] - df['종가'].iloc[-2]) / df['종가'].iloc[-2] * 100) if len(df) > 1 else 0.0
+                        })
+                    except Exception as e:
+                        logger.warning(f"{stock['name']} 분석 건너뜀: {e}")
+
+                # 3. 수익률 순 정렬 후 상위 3개
+                top_3 = sorted(results, key=lambda x: x['expected_return'], reverse=True)[:3]
+                
+                # 4. 상위 3개에 대한 차트 생성
+                charts = []
+                for item in top_3:
+                    chart_path = generate_stock_chart(item["code"], item["name"], 
+                                                   days=30, prediction_data=item["prediction"])
+                    charts.append(chart_path)
+                
+                return top_3, charts
+
+            try:
+                loop = asyncio.get_event_loop()
+                with ThreadPoolExecutor() as pool:
+                    top_3, charts = await loop.run_in_executor(pool, analyze_candidates)
+
+                if not top_3:
+                    await interaction.followup.send("❌ 분석 가능한 추천 종목이 없습니다.")
+                    return
+
+                await interaction.followup.send(f"📊 **AI 모델(Chronos-Small) 기반 기대 수익률 상위 종목**\n(후보군: 코스피 우량주 {len(KOSPI_WATCHLIST)}종)\n{'-'*30}")
+
+                for i, item in enumerate(top_3):
+                    emoji = "📈" if item["change"] > 0 else "📉" if item["change"] < 0 else "➖"
+                    color = "🔴" if item["change"] > 0 else "🔵" if item["change"] < 0 else "⚪"
+                    
+                    msg = f"**#{i+1} {item['name']} ({item['code']})**\n"
+                    msg += f"💰 현재가: **{item['current_price']:,}원**\n"
+                    msg += f"{emoji} 전일대비: {color} {item['change']:+,}원 ({item['change_rate']:+.2f}%)\n"
+                    msg += f"🚀 **3일 뒤 예상 수익률: {item['expected_return']:+.2f}%**\n\n"
+                    
+                    view = BuyButtonView(item["code"], item["name"], item["current_price"])
+                    
+                    chart_path = charts[i]
+                    if chart_path:
+                        file = discord.File(chart_path, filename=f"{item['code']}_pred.png")
+                        await interaction.followup.send(msg, file=file, view=view)
+                    else:
+                        await interaction.followup.send(msg, view=view)
+
+            except Exception as e:
+                logger.error(f"모델 추천 실패: {e}")
+                await interaction.followup.send(f"❌ 모델 추천 중 에러 발생: {e}")
 
         @self.tree.command(name="news", description="최신 뉴스 조회")
         async def slash_news(interaction: discord.Interaction):
@@ -527,40 +678,42 @@ class TradingBot(commands.Bot):
         @fav_group.command(name="add", description="관심종목 추가")
         @discord.app_commands.describe(query="종목명 또는 코드")
         async def fav_add(interaction: discord.Interaction, query: str):
+            await interaction.response.defer(ephemeral=True)
             from src.utils.favorites import favorites_manager
             from src.data.stock_search import search_stock
 
-            stock_info = search_stock(query)
+            stock_info = await asyncio.to_thread(search_stock, query)
             if not stock_info:
-                await interaction.response.send_message(f"❌ '{query}' 종목을 찾을 수 없습니다.", ephemeral=True)
+                await interaction.followup.send(f"❌ '{query}' 종목을 찾을 수 없습니다.")
                 return
 
             user_id = interaction.user.id
             if await favorites_manager.add_favorite(user_id, stock_info):
                 name = stock_info.get("name", stock_info["code"])
-                await interaction.response.send_message(f"✅ **{name}** 관심종목 추가 완료!", ephemeral=True)
+                await interaction.followup.send(f"✅ **{name}** 관심종목 추가 완료!")
             else:
-                await interaction.response.send_message(f"⚠️ 이미 관심종목에 있습니다.", ephemeral=True)
+                await interaction.followup.send(f"⚠️ 이미 관심종목에 있습니다.")
 
         @fav_group.command(name="remove", description="관심종목 제거")
         @discord.app_commands.describe(query="종목명 또는 코드")
         async def fav_remove(interaction: discord.Interaction, query: str):
+            await interaction.response.defer(ephemeral=True)
             from src.utils.favorites import favorites_manager
             from src.data.stock_search import search_stock
 
-            stock_info = search_stock(query)
+            stock_info = await asyncio.to_thread(search_stock, query)
             if not stock_info:
-                 await interaction.response.send_message(f"❌ '{query}' 종목을 찾을 수 없습니다.", ephemeral=True)
-                 return
+                await interaction.followup.send(f"❌ '{query}' 종목을 찾을 수 없습니다.")
+                return
 
             code = stock_info["code"]
             name = stock_info.get("name", code)
             user_id = interaction.user.id
 
             if await favorites_manager.remove_favorite(user_id, code):
-                await interaction.response.send_message(f"🗑️ **{name}** 관심종목 삭제 완료!", ephemeral=True)
+                await interaction.followup.send(f"🗑️ **{name}** 관심종목 삭제 완료!")
             else:
-                await interaction.response.send_message(f"⚠️ 관심종목에 없는 종목입니다.", ephemeral=True)
+                await interaction.followup.send(f"⚠️ 관심종목에 없는 종목입니다.")
 
         self.tree.add_command(fav_group)
 
@@ -583,26 +736,34 @@ class TradingBot(commands.Bot):
             cash = int(output2.get("dnca_tot_amt", 0))
             
             stock_eval_total = sum(int(item.get("evlu_amt", 0)) for item in output1)
+            
+            # 총 평가 손익 계산
+            total_pnl = int(output2.get("evlu_pfls_smtl_amt", 0))  # 평가손익합계금액
+            total_pnl_rate = float(output2.get("evlu_pfls_rt", 0)) if output2.get("evlu_pfls_rt") else 0  # 평가손익률
 
-            msg = f"📊 **포트폴리오 ({mode.upper()})**\n"
+            pnl_emoji = "📈" if total_pnl >= 0 else "📉"
+
+            msg = f"� **포트폴리오 ({mode.upper()})**\n"
             msg += f"💰 총 평가금액: {total_eval:,}원\n"
             msg += f"💵 예수금: {cash:,}원\n"
-            msg += f"📦 주식 평가금액: {stock_eval_total:,}원\n\n"
+            msg += f"📦 주식 평가금액: {stock_eval_total:,}원\n"
+            msg += f"{pnl_emoji} **총 평가손익**: {total_pnl:+,}원 ({total_pnl_rate:+.2f}%)\n\n"
             
             if output1:
                 msg += "📈 **보유 종목**:\n"
                 for item in output1[:10]:
                     name = item.get("prdt_name", "")
                     qty = int(item.get("hldg_qty", 0))
-                    profit = float(item.get("evlu_pfls_rt", 0))
+                    profit_rate = float(item.get("evlu_pfls_rt", 0))
+                    profit_amt = int(item.get("evlu_pfls_amt", 0))  # 평가손익금액
                     current = int(item.get("prpr", 0))
                     buy_price = float(item.get("pchs_avg_pric", 0))
                     eval_amt = int(item.get("evlu_amt", 0))
 
-                    emoji = "🔴" if profit > 0 else "🔵" if profit < 0 else "⚪"
+                    emoji = "🔴" if profit_rate > 0 else "🔵" if profit_rate < 0 else "⚪"
                     msg += f"• **{name}** ({qty}주) {emoji}\n"
                     msg += f"  └ 매수가: {buy_price:,.0f}원 | 현재가: {current:,}원\n"
-                    msg += f"  └ 평가금액: {eval_amt:,}원 ({profit:+.2f}%)\n"
+                    msg += f"  └ 평가금액: {eval_amt:,}원 | **손익: {profit_amt:+,}원** ({profit_rate:+.2f}%)\n"
             else:
                 msg += "📭 보유 종목 없음"
             
