@@ -607,6 +607,11 @@ async def send_recommendations_with_buttons(recommendations, market="KR", channe
             logger.error("메시지를 보낼 수 있는 채널을 찾지 못했습니다. (권한 부족 또는 서버 없음)")
             return False
 
+        # 채널 정보 및 권한 로깅
+        perms = target_channel.permissions_for(target_channel.guild.me)
+        logger.info(f"[{market}] 메시지 전송 시도: #{target_channel.name} (ID: {target_channel.id})")
+        logger.info(f"[{market}] 권한 상태 - send_messages: {perms.send_messages}, embed_links: {perms.embed_links}")
+
         await target_channel.send(f"🌅 **오늘의 {market} 추천 종목 (봇 직접 알림)**")
         
         for rec in recommendations:

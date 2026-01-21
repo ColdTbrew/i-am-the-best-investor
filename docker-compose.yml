@@ -1,0 +1,15 @@
+services:
+  investor-bot:
+    build: .
+    container_name: investor-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+      - ./tokens:/app/tokens
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

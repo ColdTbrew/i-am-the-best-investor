@@ -1,23 +1,43 @@
-# Python 3.11 slim 이미지 사용
-FROM python:3.11-slim
+FROM python:3.12-slim
 
-# 작업 디렉토리 설정
 WORKDIR /app
 
-# uv 설치
-RUN pip install uv
+# 시스템 패키지 설치 (Playwright, 한글 폰트 등)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    fonts-nanum \
+    libnss3 \
+    libnspr4 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libdbus-1-3 \
+    libatspi2.0-0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libxkbcommon0 \
+    libasound2 \
+    libpango-1.0-0 \
+    libcairo2 \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf ~/.cache/matplotlib/*
 
-# 의존성 파일 복사
+# uv 설치
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# 프로젝트 파일 복사
 COPY pyproject.toml uv.lock* ./
+COPY src/ ./src/
+COPY main.py .
 
 # 의존성 설치
 RUN uv sync --frozen --no-dev
 
-# 소스 코드 복사
-COPY . .
+# Playwright 브라우저 설치
+RUN uv run playwright install chromium
 
-# 환경변수 설정
-ENV TRADING_MODE=paper
-
-# 실행 (스케줄러 + Discord 봇)
-CMD ["uv", "run", "python", "main.py", "--with-discord"]
+# 실행
+CMD ["uv", "run", "main.py", "--with-discord"]
