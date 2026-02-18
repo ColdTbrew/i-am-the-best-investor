@@ -12,14 +12,51 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 # 기본 거래 모드 (초기값)
 DEFAULT_TRADING_MODE = os.getenv("TRADING_MODE", "paper")
 
-# 한국투자증권 API 설정 (Real / Paper)
+# 한국투자증권 API 설정
+
+# 동적 real 계좌 탐색 (real01_*, real02_*, ... real99_*)
+def _discover_real_accounts():
+    """환경변수에서 realNN_account_* 패턴으로 등록된 계좌들을 자동 탐색"""
+    accounts = []
+    for i in range(1, 100):
+        prefix = f"real{i:02d}"
+        api_key = os.getenv(f"{prefix}_account_api_key")
+        if not api_key:
+            continue
+        accounts.append({
+            "id": prefix,
+            "app_key": api_key,
+            "app_secret": os.getenv(f"{prefix}_account_api_secret"),
+            "base_url": "https://openapi.koreainvestment.com:9443",
+            "account_number": os.getenv(f"{prefix}_account_number"),
+            "account_product": os.getenv(f"{prefix}_account_product", "01"),
+        })
+    return accounts
+
+REAL_ACCOUNTS = _discover_real_accounts()
+
+def get_real_account_by_number(account_number: str) -> dict:
+    """계좌번호로 real 계좌 설정을 조회"""
+    for acc in REAL_ACCOUNTS:
+        if acc["account_number"] == account_number:
+            return acc
+    return None
+
+def get_real_account_by_id(account_id: str) -> dict:
+    """ID(real01, real02 등)로 real 계좌 설정을 조회"""
+    for acc in REAL_ACCOUNTS:
+        if acc["id"] == account_id:
+            return acc
+    return None
+
 KIS_CONFIG = {
-    "real": {
-        "app_key": os.getenv("real_account_api_key"),
-        "app_secret": os.getenv("real_account_api_secret"),
+    # real 기본값: 첫 번째 발견된 계좌 (하위 호환)
+    "real": REAL_ACCOUNTS[0] if REAL_ACCOUNTS else {
+        "app_key": None,
+        "app_secret": None,
         "base_url": "https://openapi.koreainvestment.com:9443",
-        "account_number": os.getenv("real_account_number"),
-        "account_product": os.getenv("real_account_product", "01"),
+        "account_number": None,
+        "account_product": "01",
     },
     "paper": {
         "app_key": os.getenv("fake_account_api_key"),

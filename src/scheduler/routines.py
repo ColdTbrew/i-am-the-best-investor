@@ -82,7 +82,8 @@ async def run_morning_routine(scheduler=None, channel=None):
                 args=[orders_to_schedule, "KR"],
                 name='Morning Buy Orders'
             )
-            send_webhook_message(f"⏰ **KR 매수 주문 예약됨**: 09:00 실행 예정 ({len(orders_to_schedule)}종목)")
+            order_details = "\n".join([f"  • {o['name']} ({o['code']}) {o['qty']}주" for o in orders_to_schedule])
+            send_webhook_message(f"⏰ **KR 매수 주문 예약됨**: 09:00 실행 예정 ({len(orders_to_schedule)}종목)\n{order_details}")
 
         # 2. 매도 추천 (보유 중) - balance가 있을 때만
         if balance:
@@ -162,7 +163,8 @@ async def run_evening_routine(scheduler=None, channel=None):
                 args=[orders_to_schedule, "US"],
                 name='Evening Buy Orders'
             )
-             send_webhook_message(f"⏰ **US 매수 주문 예약됨**: 23:30 실행 예정")
+             order_details = "\n".join([f"  • {o['name']} ({o['code']}) {o['qty']}주 @${o['price']:,.2f}" for o in orders_to_schedule])
+             send_webhook_message(f"⏰ **US 매수 주문 예약됨**: 23:30 실행 예정 ({len(orders_to_schedule)}종목)\n{order_details}")
 
         # 2. 매도 추천 (미국 보유 종목)
         try:

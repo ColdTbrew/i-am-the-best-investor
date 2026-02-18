@@ -95,6 +95,7 @@ def main():
     parser.add_argument("--discord-bot", action="store_true", help="Discord 봇 모드")
     parser.add_argument("--with-discord", action="store_true", help="스케줄러 + Discord 봇")
     parser.add_argument("--mode", choices=["real", "paper"], default="real", help="실행 모드 (기본: real)")
+    parser.add_argument("--account", type=str, default=None, help="사용할 계좌번호 (real 모드, 예: 69247414)")
 
     # 수동 루틴 실행
     parser.add_argument("--morning", action="store_true", help="아침 루틴 즉시 실행 (KR)")
@@ -109,6 +110,15 @@ def main():
 
     # 초기 모드 설정
     state.set_mode(args.mode)
+    
+    # 계좌 설정 (real 모드 + --account 옵션)
+    if args.account and args.mode == "real":
+        if not state.set_real_account(args.account):
+            from src.utils.config import REAL_ACCOUNTS
+            available = ", ".join([f"{a['id']}({a['account_number']})" for a in REAL_ACCOUNTS])
+            logger.error(f"계좌번호 '{args.account}'을 찾을 수 없습니다. 사용 가능: {available}")
+            return
+        logger.info(f"📋 선택된 계좌: {args.account}")
     
     # 수동 루틴 실행
     if args.morning:

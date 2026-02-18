@@ -29,21 +29,28 @@ class KISToken:
 class KISClient:
     """한국투자증권 API 클라이언트"""
     
-    def __init__(self, mode: str = "paper"):
+    def __init__(self, mode: str = "paper", account_config: dict = None):
         self.mode = mode
-        config = KIS_CONFIG[mode]
+        
+        if account_config:
+            config = account_config
+        else:
+            config = KIS_CONFIG[mode]
 
         self.base_url = config["base_url"]
         self.app_key = config["app_key"]
         self.app_secret = config["app_secret"]
         self.account_number = config["account_number"]
         self.account_product = config["account_product"]
+        self.account_id = config.get("id", mode)  # real01, real02, ... 또는 mode
 
         self.token: Optional[KISToken] = None
-        self.token_file = DATA_DIR / f"kis_token_{mode}.json"
+        # 계좌별 토큰 파일 분리
+        token_suffix = self.account_id if mode == "real" else mode
+        self.token_file = DATA_DIR / f"kis_token_{token_suffix}.json"
 
         if not self.app_key or not self.app_secret:
-            logger.warning(f"⚠️ {mode} 모드 API 키가 설정되지 않았습니다.")
+            logger.warning(f"⚠️ {mode} 모드 ({self.account_id}) API 키가 설정되지 않았습니다.")
 
         self._load_token()
     
@@ -375,15 +382,34 @@ class KISClient:
 # 클라이언트 인스턴스 관리
 _clients: Dict[str, KISClient] = {}
 
-def get_kis_client(mode: str = None) -> KISClient:
+def get_kis_client(mode: str = None, account_number: str = None) -> KISClient:
     """
     KIS 클라이언트 반환 (싱글톤 패턴)
     mode: 'real' or 'paper'. None이면 state.get_mode() 사용
+    account_number: real 모드에서 사용할 계좌번호. None이면 state에서 가져옴
     """
+    from src.utils.config import get_real_account_by_number
+
     if mode is None:
         mode = state.get_mode()
 
-    if mode not in _clients:
-        _clients[mode] = KISClient(mode)
-
-    return _clients[mode]
+    if mode == "real":
+        # real 모드: 계좌번호 기반 캐시
+        if account_number is None:
+            account_number = state.get_real_account_number()
+        
+        cache_key = f"real:{account_number}"
+        if cache_key not in _clients:
+            account_config = get_real_account_by_number(account_number)
+            if not account_config:
+                # fallback: KIS_CONFIG["real"] 사용
+                logger.warning(f"계좌번호 {account_number}을 찾을 수 없습니다. 기본 계좌 사용.")
+                _clients[cache_key] = KISClient(mode)
+            else:
+                _clients[cache_key] = KISClient(mode, account_config=account_config)
+        return _clients[cache_key]
+    else:
+        # paper 모드: 기존 동작
+        if mode not in _clients:
+            _clients[mode] = KISClient(mode)
+        return _clients[mode]

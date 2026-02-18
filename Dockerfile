@@ -2,6 +2,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# 타임존 설정 (Asia/Seoul)
+ENV TZ=Asia/Seoul
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
 # 시스템 패키지 설치 (Playwright, 한글 폰트 등)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-nanum \
@@ -32,6 +36,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY pyproject.toml uv.lock* ./
 COPY src/ ./src/
 COPY main.py .
+COPY favorites.json* ./
 
 # 의존성 설치
 RUN uv sync --frozen --no-dev
