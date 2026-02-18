@@ -143,12 +143,33 @@ class TradingBot(commands.Bot):
             discord.app_commands.Choice(name="모의투자 (Paper)", value="paper"),
         ])
         async def slash_mode(interaction: discord.Interaction, mode: discord.app_commands.Choice[str]):
-            current = state.get_mode()
-            if current == mode.value:
-                await interaction.response.send_message(f"이미 **{mode.value.upper()}** 모드입니다.")
-            else:
-                state.set_mode(mode.value)
-                await interaction.response.send_message(f"🔄 모드 변경 완료: **{mode.value.upper()}**")
+            if mode.value == "paper":
+                state.set_mode("paper")
+                await interaction.response.send_message("🔄 모드 변경 완료: **PAPER** (모의투자)")
+            elif mode.value == "real":
+                from src.utils.config import REAL_ACCOUNTS
+                if not REAL_ACCOUNTS:
+                    await interaction.response.send_message("❌ 등록된 실전 계좌가 없습니다. `.env` 파일을 확인해주세요.")
+                    return
+                
+                if len(REAL_ACCOUNTS) == 1:
+                    # 계좌가 1개면 바로 선택
+                    acc = REAL_ACCOUNTS[0]
+                    state.set_mode("real")
+                    state.set_real_account(acc["account_number"])
+                    masked = acc["account_number"][-4:]
+                    await interaction.response.send_message(
+                        f"🔄 모드 변경 완료: **REAL** (실전투자)\n"
+                        f"📋 계좌: ****{masked} ({acc['id']})"
+                    )
+                else:
+                    # 계좌 선택 UI
+                    view = AccountSelectView(REAL_ACCOUNTS)
+                    msg = "🏦 **실전 계좌를 선택해주세요:**\n"
+                    for acc in REAL_ACCOUNTS:
+                        masked = acc["account_number"][-4:]
+                        msg += f"• `{acc['id']}` — 계좌번호: ****{masked}\n"
+                    await interaction.response.send_message(msg, view=view)
 
         # 수동 루틴 실행
         @self.tree.command(name="morning", description="🌅 아침 루틴 즉시 실행 (한국장 분석)")
@@ -777,6 +798,49 @@ class TradingBot(commands.Bot):
             await interaction.followup.send(f"❌ 포트폴리오 조회 중 에러 발생: {e}")
 
 
+class AccountSelectView(discord.ui.View):
+    """실전 계좌 선택 View"""
+    def __init__(self, accounts: list):
+        super().__init__(timeout=60)
+        self.accounts = accounts
+        
+        # 드롭다운 메뉴 생성
+        options = []
+        for acc in accounts:
+            masked = acc["account_number"][-4:]
+            options.append(discord.SelectOption(
+                label=f"{acc['id']} — ****{masked}",
+                value=acc["account_number"],
+                description=f"계좌번호: ****{masked}"
+            ))
+        
+        select = discord.ui.Select(
+            placeholder="계좌를 선택하세요...",
+            options=options,
+            custom_id="account_select"
+        )
+        select.callback = self.on_select
+        self.add_item(select)
+    
+    async def on_select(self, interaction: discord.Interaction):
+        selected_number = interaction.data["values"][0]
+        state.set_mode("real")
+        state.set_real_account(selected_number)
+        masked = selected_number[-4:]
+        
+        # 선택된 계좌의 ID 찾기
+        acc_id = "unknown"
+        for acc in self.accounts:
+            if acc["account_number"] == selected_number:
+                acc_id = acc["id"]
+                break
+        
+        await interaction.response.edit_message(
+            content=f"✅ 모드 변경 완료: **REAL** (실전투자)\n📋 계좌: ****{masked} ({acc_id})",
+            view=None
+        )
+
+
 class BuyButtonView(discord.ui.View):
     """추천 종목 매수 버튼 View"""
     def __init__(self, stock_code: str, stock_name: str, price: float):
@@ -845,6 +909,131 @@ class SellButtonView(discord.ui.View):
                 await interaction.followup.send(f"❌ 매도 실패: {res.get('msg1')}", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ 에러 발생: {e}", ephemeral=True)
+
+
+class MomentumApprovalView(discord.ui.View):
+    """급등주 단타 매수 승인 View (2분 타임아웃)"""
+
+    def __init__(self, code: str, name: str, qty: int, price: int, rate: float):
+        super().__init__(timeout=120)
+        self.code = code
+        self.name = name
+        self.qty = qty
+        self.price = price
+        self.rate = rate
+        self._responded = False
+
+    @discord.ui.button(label="✅ 매수 승인", style=discord.ButtonStyle.green, custom_id="momentum_approve_btn")
+    async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self._responded:
+            await interaction.response.send_message("이미 처리된 요청입니다.", ephemeral=True)
+            return
+        self._responded = True
+        self.stop()
+
+        await interaction.response.defer()
+
+        from src.trading.momentum import execute_momentum_buy
+        res = await asyncio.to_thread(execute_momentum_buy, self.code, self.name, self.qty, self.price)
+
+        if res.get("rt_cd") == "0":
+            embed = discord.Embed(
+                title=f"✅ 단타 매수 체결",
+                description=f"**{self.name}** ({self.code})",
+                color=0x00CC44,
+                timestamp=datetime.now(),
+            )
+            embed.add_field(name="수량", value=f"{self.qty}주", inline=True)
+            embed.add_field(name="현재가", value=f"{self.price:,}원", inline=True)
+            embed.add_field(name="등락률", value=f"{self.rate:+.1f}%", inline=True)
+            embed.add_field(name="예상 금액", value=f"{self.price * self.qty:,}원", inline=True)
+            embed.add_field(name="승인자", value=interaction.user.display_name, inline=True)
+        else:
+            err = res.get("msg1", "알 수 없는 오류")
+            embed = discord.Embed(
+                title=f"❌ 단타 매수 실패",
+                description=f"**{self.name}** ({self.code})\n사유: {err}",
+                color=0xFF4444,
+                timestamp=datetime.now(),
+            )
+
+        await interaction.edit_original_response(embed=embed, view=None)
+
+    @discord.ui.button(label="❌ 거절", style=discord.ButtonStyle.secondary, custom_id="momentum_reject_btn")
+    async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self._responded:
+            await interaction.response.send_message("이미 처리된 요청입니다.", ephemeral=True)
+            return
+        self._responded = True
+        self.stop()
+
+        embed = discord.Embed(
+            title="🚫 단타 매수 거절됨",
+            description=f"**{self.name}** ({self.code}) — {interaction.user.display_name}님이 거절했습니다.",
+            color=0x888888,
+            timestamp=datetime.now(),
+        )
+        await interaction.response.edit_message(embed=embed, view=None)
+
+    async def on_timeout(self):
+        """2분 내 응답 없으면 자동 만료"""
+        logger.info(f"단타 승인 타임아웃: {self.name} ({self.code})")
+        # 채널 메시지를 직접 수정할 수 없으므로 웹훅으로 알림
+        send_webhook_message(
+            f"⏰ **단타 매수 승인 시간 초과** — {self.name} ({self.code}) {self.qty}주 요청이 만료되었습니다."
+        )
+
+
+async def send_momentum_approval(code: str, name: str, qty: int, price: int, rate: float):
+    """급등주 단타 매수 승인 요청 메시지를 디스코드 채널로 전송"""
+    if not state.discord_bot:
+        logger.warning("Discord 봇이 초기화되지 않아 승인 요청을 보낼 수 없습니다.")
+        send_webhook_message(
+            f"⚠️ 디스코드 봇 미초기화 — 단타 승인 불가\n{name} ({code}) {qty}주 @ {price:,}원"
+        )
+        return False
+
+    try:
+        bot = state.discord_bot
+        target_channel = None
+
+        for guild in bot.guilds:
+            for cand in guild.text_channels:
+                perms = cand.permissions_for(guild.me)
+                if perms.send_messages and perms.embed_links:
+                    target_channel = cand
+                    break
+            if target_channel:
+                break
+
+        if not target_channel:
+            logger.error("단타 승인 메시지를 보낼 채널을 찾지 못했습니다.")
+            send_webhook_message(
+                f"⚠️ 채널 없음 — 단타 승인 불가\n{name} ({code}) {qty}주 @ {price:,}원"
+            )
+            return False
+
+        embed = discord.Embed(
+            title=f"🚀 급등주 단타 매수 승인 요청",
+            description=f"**{name}** ({code})",
+            color=0xFFAA00,
+            timestamp=datetime.now(),
+        )
+        embed.add_field(name="현재가", value=f"{price:,}원", inline=True)
+        embed.add_field(name="등락률", value=f"{rate:+.1f}%", inline=True)
+        embed.add_field(name="매수 수량", value=f"{qty}주", inline=True)
+        embed.add_field(name="예상 금액", value=f"{price * qty:,}원", inline=True)
+        embed.set_footer(text="2분 내에 승인하지 않으면 자동 만료됩니다.")
+
+        view = MomentumApprovalView(code, name, qty, price, rate)
+        await target_channel.send(embed=embed, view=view)
+        logger.info(f"단타 승인 요청 전송 완료: {name} ({code}) → #{target_channel.name}")
+        return True
+
+    except Exception as e:
+        logger.error(f"단타 승인 요청 전송 실패: {e}")
+        send_webhook_message(f"❌ 단타 승인 요청 전송 실패: {e}")
+        return False
 
 
 async def send_recommendations_with_buttons(recommendations, market="KR", channel=None):

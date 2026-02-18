@@ -99,6 +99,13 @@ def mock_kis_client_for_momentum(monkeypatch):
     }
 
     monkeypatch.setattr("src.trading.momentum.get_kis_client", lambda mode: mock_client)
+
+    # 잔액 충분 (기본값: 100만원)
+    mock_client.get_balance.return_value = {
+        "output1": [],
+        "output2": [{"dnca_tot_amt": "1000000"}]
+    }
+
     return mock_client
 
 @pytest.fixture
