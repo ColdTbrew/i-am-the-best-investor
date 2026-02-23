@@ -5,7 +5,9 @@ from src.data import generate_stock_chart
 from src.analysis.price_predictor import predictor
 from src.trading import get_kis_client
 from pykrx import stock as pykrx_stock
+import pytest
 
+@pytest.mark.asyncio
 async def test_prediction_and_chart():
     print("🚀 예측 및 차트 생성 테스트 시작...")
     

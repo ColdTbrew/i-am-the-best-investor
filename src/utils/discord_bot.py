@@ -113,6 +113,32 @@ def notify_news_summary(news_list: list, market_data: dict = None):
     send_webhook_message("", embeds=[embed])
 
 
+def notify_error(error_msg: str):
+    send_webhook_message(f"⚠️ **에러 발생**\n```{error_msg}```")
+
+
+# ==================== 유틸리티 ====================
+
+def safe_int(val, default=0):
+    """KIS API의 빈 문자열 등을 처리하여 int로 변환"""
+    if val is None or (isinstance(val, str) and not val.strip()):
+        return default
+    try:
+        return int(float(val))
+    except (ValueError, TypeError):
+        return default
+
+
+def safe_float(val, default=0.0):
+    """KIS API의 빈 문자열 등을 처리하여 float로 변환"""
+    if val is None or (isinstance(val, str) and not val.strip()):
+        return default
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
+
 # ==================== Discord 봇 (양방향) ====================
 
 class TradingBot(commands.Bot):
@@ -748,51 +774,100 @@ class TradingBot(commands.Bot):
         try:
             mode = state.get_mode()
             client = get_kis_client(mode)
-            balance = await asyncio.to_thread(client.get_balance)
+            
+            # 1. 국내/해외 잔고 동시 조회
+            domestic_task = asyncio.to_thread(client.get_balance)
+            overseas_task = asyncio.to_thread(client.get_overseas_balance)
+            
+            domestic_balance, overseas_balance = await asyncio.gather(domestic_task, overseas_task, return_exceptions=True)
+            
+            msg = f"📊 **포트폴리오 ({mode.upper()})**\n"
+            has_data = False
 
-            output1 = balance.get("output1", [])
-            output2 = balance.get("output2", [{}])[0]
-            
-            total_eval = int(output2.get("tot_evlu_amt", 0))
-            cash = int(output2.get("dnca_tot_amt", 0))
-            
-            stock_eval_total = sum(int(item.get("evlu_amt", 0)) for item in output1)
-            
-            # 총 평가 손익 계산
-            total_pnl = int(output2.get("evlu_pfls_smtl_amt", 0))  # 평가손익합계금액
-            total_pnl_rate = float(output2.get("evlu_pfls_rt", 0)) if output2.get("evlu_pfls_rt") else 0  # 평가손익률
+            # --- 국내 주식 처리 ---
+            if not isinstance(domestic_balance, Exception) and domestic_balance:
+                output1 = domestic_balance.get("output1", [])
+                output2 = domestic_balance.get("output2", [{}])[0]
 
-            pnl_emoji = "📈" if total_pnl >= 0 else "📉"
+                # 수량이 있는 종목만 필터링
+                owned_stocks = [item for item in output1 if safe_int(item.get("hldg_qty", 0)) > 0]
 
-            msg = f"� **포트폴리오 ({mode.upper()})**\n"
-            msg += f"💰 총 평가금액: {total_eval:,}원\n"
-            msg += f"💵 예수금: {cash:,}원\n"
-            msg += f"📦 주식 평가금액: {stock_eval_total:,}원\n"
-            msg += f"{pnl_emoji} **총 평가손익**: {total_pnl:+,}원 ({total_pnl_rate:+.2f}%)\n\n"
-            
-            if output1:
-                msg += "📈 **보유 종목**:\n"
-                for item in output1[:10]:
-                    name = item.get("prdt_name", "")
-                    qty = int(item.get("hldg_qty", 0))
-                    profit_rate = float(item.get("evlu_pfls_rt", 0))
-                    profit_amt = int(item.get("evlu_pfls_amt", 0))  # 평가손익금액
-                    current = int(item.get("prpr", 0))
-                    buy_price = float(item.get("pchs_avg_pric", 0))
-                    eval_amt = int(item.get("evlu_amt", 0))
+                if owned_stocks or safe_int(output2.get("tot_evlu_amt", 0)) > 0:
+                    has_data = True
+                    total_eval = safe_int(output2.get("tot_evlu_amt", 0))
+                    cash = safe_int(output2.get("dnca_tot_amt", 0))
+                    total_pnl = safe_int(output2.get("evlu_pfls_smtl_amt", 0))
+                    total_pnl_rate = safe_float(output2.get("evlu_pfls_rt", 0))
 
-                    emoji = "🔴" if profit_rate > 0 else "🔵" if profit_rate < 0 else "⚪"
-                    msg += f"• **{name}** ({qty}주) {emoji}\n"
-                    msg += f"  └ 매수가: {buy_price:,.0f}원 | 현재가: {current:,}원\n"
-                    msg += f"  └ 평가금액: {eval_amt:,}원 | **손익: {profit_amt:+,}원** ({profit_rate:+.2f}%)\n"
-            else:
-                msg += "📭 보유 종목 없음"
+                    pnl_emoji = "📈" if total_pnl >= 0 else "📉"
+                    msg += f"\n🇰🇷 **국내 자산**\n"
+                    msg += f"💰 총 평가금액: {total_eval:,}원\n"
+                    msg += f"💵 예수금: {cash:,}원\n"
+                    msg += f"{pnl_emoji} 총 평가손익: {total_pnl:+,}원 ({total_pnl_rate:+.2f}%)\n"
+
+                    if owned_stocks:
+                        msg += "📈 보유 종목:\n"
+                        for item in owned_stocks[:10]:
+                            name = item.get("prdt_name", "")
+                            qty = safe_int(item.get("hldg_qty", 0))
+                            profit_rate = safe_float(item.get("evlu_pfls_rt", 0))
+                            profit_amt = safe_int(item.get("evlu_pfls_amt", 0))
+                            current = safe_int(item.get("prpr", 0))
+                            buy_price = safe_float(item.get("pchs_avg_pric", 0))
+                            eval_amt = safe_int(item.get("evlu_amt", 0))
+
+                            emoji = "🔴" if profit_rate > 0 else "🔵" if profit_rate < 0 else "⚪"
+                            msg += f"• **{name}** ({qty}주) {emoji}\n"
+                            msg += f"  └ 매수가: {buy_price:,.0f}원 | 현재가: {current:,}원\n"
+                            msg += f"  └ 평가금액: {eval_amt:,}원 | **손익: {profit_amt:+,}원** ({profit_rate:+.2f}%)\n"
+                    if len(owned_stocks) > 10:
+                        msg += f"... 외 {len(owned_stocks) - 10}개 종목\n"
+
+            # --- 해외 주식 처리 ---
+            if not isinstance(overseas_balance, Exception) and overseas_balance:
+                output1 = overseas_balance.get("output1", [])
+                output2 = overseas_balance.get("output2", {})
+
+                # 해외 주식 필터링 (hldg_qty)
+                owned_overseas = [item for item in output1 if safe_int(item.get("hldg_qty", 0)) > 0]
+
+                if owned_overseas or safe_float(output2.get("tot_evlu_amt", 0)) > 0:
+                    has_data = True
+                    total_eval = safe_float(output2.get("tot_evlu_amt", 0))
+                    total_pnl = safe_float(output2.get("tot_evlu_pft_amt", 0))
+                    total_pnl_rate = safe_float(output2.get("tot_pft_rt", 0))
+
+                    pnl_emoji = "📈" if total_pnl >= 0 else "📉"
+                    msg += f"\n🇺🇸 **해외 자산 (USD)**\n"
+                    msg += f"💰 총 평가금액: ${total_eval:,.2f}\n"
+                    msg += f"{pnl_emoji} 총 평가손익: ${total_pnl:+,.2f} ({total_pnl_rate:+.2f}%)\n"
+
+                    if owned_overseas:
+                        msg += "📈 보유 종목:\n"
+                        for item in owned_overseas[:10]:
+                            name = item.get("ovrs_item_name", "")
+                            code = item.get("ovrs_pdno", "")
+                            qty = safe_int(item.get("hldg_qty", 0))
+                            profit_rate = safe_float(item.get("evlu_pfls_rt", 0))
+                            profit_amt = safe_float(item.get("evlu_pfls_amt", 0))
+                            current = safe_float(item.get("now_pric", 0))
+                            buy_price = safe_float(item.get("pchs_avg_pric", 0))
+
+                            emoji = "🔴" if profit_rate > 0 else "🔵" if profit_rate < 0 else "⚪"
+                            msg += f"• **{name}** ({code}, {qty}주) {emoji}\n"
+                            msg += f"  └ 매수가: ${buy_price:,.2f} | 현재가: ${current:,.2f}\n"
+                            msg += f"  └ **손익: ${profit_amt:+,.2f}** ({profit_rate:+.2f}%)\n"
+                    if len(owned_overseas) > 10:
+                        msg += f"... 외 {len(owned_overseas) - 10}개 종목\n"
+
+            if not has_data:
+                msg += "\n📭 보유 종목이 없습니다."
             
-            if followup:
-                # 이미 defer된 상태거나 추가 메시지로 보낼 때
-                await interaction.followup.send(msg)
-            else:
-                await interaction.followup.send(msg)
+            # 메시지 길이 제한 처리 (2000자)
+            if len(msg) > 2000:
+                msg = msg[:1990] + "..."
+
+            await interaction.followup.send(msg)
         except Exception as e:
             logger.error(f"포트폴리오 조회 실패: {e}")
             await interaction.followup.send(f"❌ 포트폴리오 조회 중 에러 발생: {e}")
