@@ -1,0 +1,32 @@
+[Unit]
+Description=Stock Trading Bot Service
+After=network.target
+
+[Service]
+# Replace 'ubuntu' with your actual username if different
+User=ubuntu
+Group=ubuntu
+
+# Adjust the path to your project directory
+WorkingDirectory=/home/ubuntu/stock-bot
+
+# Environment variables
+# Ensure TRADING_MODE is set correctly (real or paper)
+Environment=TRADING_MODE=real
+# If you need to set PYTHONPATH explicitly (usually not needed with uv run if structure is standard)
+# Environment=PYTHONPATH=/home/ubuntu/stock-bot
+
+# Command to run
+# Using uv to run python. Ensure uv is in the path or use absolute path (e.g., /home/ubuntu/.cargo/bin/uv)
+ExecStart=/home/ubuntu/.cargo/bin/uv run python main.py --with-discord
+
+# Restart on failure
+Restart=always
+RestartSec=5
+
+# Output logging
+StandardOutput=append:/home/ubuntu/stock-bot/logs/service.log
+StandardError=append:/home/ubuntu/stock-bot/logs/service-error.log
+
+[Install]
+WantedBy=multi-user.target
